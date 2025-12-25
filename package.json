@@ -2,8 +2,10 @@
   "name": "pons-api",
   "version": "1.0.0",
   "main": "index.js",
+  "type": "module",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "node test/audit.test.js"
   },
   "dependencies": {
     "express": "^4.19.2",
