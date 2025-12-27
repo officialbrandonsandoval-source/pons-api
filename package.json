@@ -5,7 +5,7 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",
-    "test": "node test/leakDetector.test.js && node test/api.test.js && node test/smoke.test.js",
+    "test": "node test/leakDetector.test.js && node test/api.test.js && node test/smoke.test.js && node test/audit.test.js",
     "lint": "echo \"Linting not yet configured.\""
   },
   "dependencies": {

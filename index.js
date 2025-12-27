@@ -3,7 +3,7 @@ import dotenv from "dotenv";
 import rateLimit from "express-rate-limit";
 
 import crmProviders from "./crmProviders.js";
-import leakDetector from "./leakDetector.js";
+import { detectLeaks as leakDetector } from "./leakDetector.js";
 
 dotenv.config();
 
