@@ -1,33 +1,73 @@
-const INACTIVITY_THRESHOLD_DAYS = 7;
+/**
+ * @typedef {import('./providers/types.js').Opportunity} Opportunity
+ * @typedef {import('./providers/types.js').Activity} Activity
+ * @typedef {import('./providers/types.js').Lead} Lead
+ */
+
+const INACTIVITY_THRESHOLD_DAYS = 30;
 
 /**
- * Ingests CRM data and identifies potential leaks.
- * @param {object} crmData - An object containing leads, opportunities, and activities.
- * @returns {Array} - An array of leak objects.
+ * Analyzes CRM data to find potential revenue leaks.
+ *
+ * @param {object} params
+ * @param {Opportunity[]} params.opportunities - Array of opportunities from the CRM.
+ * @param {Activity[]} params.activities - Array of activities from the CRM.
+ * @param {Lead[]} params.leads - Array of leads from the CRM.
+ * @param {Date} [params.now] - The current date for deterministic calculations. Defaults to new Date().
+ * @returns {{leaks: object[], summary: object}}
  */
-export function detectLeaks(crmData) {
-    const { opportunities } = crmData;
-    const leaks = [];
-    const now = new Date();
+export function detectLeaks({ opportunities = [], activities = [], leads = [], now = new Date() }) {
+  const leaks = [];
 
-    opportunities.forEach(opp => {
-        const daysSinceLastInteraction = (now - new Date(opp.lastInteraction)) / (1000 * 60 * 60 * 24);
+  // --- Leak Type: Stale Open Opportunities ---
+  const openOpportunities = opportunities.filter(opp => opp.status === 'open');
 
-        if (daysSinceLastInteraction > INACTIVITY_THRESHOLD_DAYS) {
-            const revenue_at_risk = opp.value;
-            // Priority score: higher for more value and longer inactivity
-            const priority_score = (revenue_at_risk / 1000) + (daysSinceLastInteraction - INACTIVITY_THRESHOLD_DAYS);
+  for (const opp of openOpportunities) {
+    // Find the most recent activity related to this opportunity's contact
+    // Note: A real implementation would need a link between opportunity and contact.
+    // We'll assume for now that activities are globally related and check the most recent one.
+    // A more robust check would be `activities.filter(a => a.contactId === opp.contactId)`
+    const lastActivityDate = activities.reduce((latest, act) => {
+        const actDate = new Date(act.createdAt);
+        return actDate > latest ? actDate : latest;
+    }, new Date(0));
 
-            leaks.push({
-                id: `stale_opportunity_${opp.id}`,
-                severity: "CRITICAL",
-                revenue_at_risk,
-                cause: `Opportunity '${opp.id}' has been inactive for ${Math.floor(daysSinceLastInteraction)} days.`,
-                recommended_action: "Review opportunity and schedule a follow-up activity immediately.",
-                priority_score: Math.round(priority_score),
-            });
-        }
-    });
+    const lastInteractionDate = new Date(opp.createdAt) > lastActivityDate ? new Date(opp.createdAt) : lastActivityDate;
 
-    return leaks;
+    const daysSinceLastInteraction = (now.getTime() - lastInteractionDate.getTime()) / (1000 * 60 * 60 * 24);
+
+    if (daysSinceLastInteraction > INACTIVITY_THRESHOLD_DAYS) {
+      leaks.push({
+        id: `stale_opportunity_${opp.id}`,
+        type: 'STALE_OPPORTUNITY',
+        severity: opp.value > 10000 ? 'HIGH' : 'MEDIUM',
+        title: 'Stale Opportunity',
+        description: `Opportunity "${opp.name}" has had no activity for ${Math.floor(daysSinceLastInteraction)} days.`,
+        recommendedAction: 'Schedule a follow-up call or email to re-engage.',
+        impactedCount: 1,
+        estimatedRevenue: opp.value,
+      });
+    }
+  }
+
+  // Sort leaks by estimated revenue descending
+  leaks.sort((a, b) => b.estimatedRevenue - a.estimatedRevenue);
+
+  const summary = leaks.reduce(
+    (acc, leak) => {
+      acc.totalLeaks += 1;
+      acc.totalEstimatedRevenue += leak.estimatedRevenue;
+      return acc;
+    },
+    {
+      totalLeaks: 0,
+      totalEstimatedRevenue: 0,
+    }
+  );
+
+  return {
+    leaks,
+    summary,
+    generatedAt: now.toISOString(),
+  };
 }

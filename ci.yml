@@ -1,0 +1,89 @@
+# This GitHub Actions workflow automates the testing and deployment of the PONS API.
+#
+# Workflow Triggers:
+# - Pushing to the 'main' branch.
+#
+# Jobs:
+# 1. test:
+#    - Checks out the code.
+#    - Sets up Node.js.
+#    - Installs dependencies using `npm ci` for a clean, reproducible build.
+#    - Runs the test suite (`npm test`) against the production API URL.
+#
+# 2. deploy-prod:
+#    - This job only runs if the 'test' job completes successfully.
+#    - Authenticates to Google Cloud using a service account.
+#    - Deploys the application to Google Cloud Run, passing necessary secrets
+#      as environment variables to the service.
+
+name: CI → Test → Deploy
+
+on:
+  push:
+    branches: [ "main" ]
+
+env:
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GCP_REGION: us-west1
+  SERVICE_NAME: pons-api
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Cache node modules
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Run Tests
+        run: npm test
+        env:
+          API_URL: ${{ secrets.API_URL }}
+          API_KEY: ${{ secrets.PONS_API_KEY }}
+
+  deploy-prod:
+    name: deploy-prod
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: 'google-github-actions/auth@v2'
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Deploy to Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ env.SERVICE_NAME }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          region: ${{ env.GCP_REGION }}
+          source: .
+          env_vars: |
+            STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
+            PONS_API_KEY=${{ secrets.PONS_API_KEY }}
+            STRIPE_PRICE_ID_PRO=${{ secrets.STRIPE_PRICE_ID_PRO }}
