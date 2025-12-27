@@ -2,12 +2,12 @@ name: pons-api-ci
 
 on:
   push:
-    branches: [main]
+    branches: [ "main" ]
   pull_request:
-    branches: [main]
+    branches: [ "main" ]
 
 jobs:
-  test-and-boot:
+  ci:
     runs-on: ubuntu-latest
 
     steps:
@@ -18,30 +18,18 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Validate package.json
-        run: node -e "JSON.parse(require('fs').readFileSync('package.json'))"
+      - name: Lint (optional)
+        run: npm run lint --if-present
 
-      - name: Run tests (if present)
-        run: |
-          if [ -d test ] || grep -q '"test"' package.json; then
-            npm test || exit 1
-          else
-            echo "No tests defined yet — skipping"
-          fi
+      - name: Run tests (optional)
+        run: npm test --if-present
 
-      - name: Boot API server
-        env:
-          PORT: 8080
-          NODE_ENV: test
+      - name: Boot server & health check
         run: |
-          node index.js &
-          sleep 5
-
-      - name: Health check
-        run: |
-          curl -f http://localhost:8080/health || exit 1
+          PORT=8080 node index.js &
+          sleep 3
+          curl --fail http://localhost:8080/health || exit 1
