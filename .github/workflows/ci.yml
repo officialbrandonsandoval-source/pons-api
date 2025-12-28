@@ -25,9 +25,13 @@ jobs:
       - name: Lint (optional)
         run: npm run lint --if-present
 
-      - name: Run tests (optional)
-        run: npm test --if-present
-
+      - name: Run tests
+        run: npm test
+        env:
+          PORT: 8080
+          NODE_ENV: test
+          PONS_API_KEY: test-key
+        
       - name: Boot server & health check
         run: |
           PORT=8080 node index.js &
