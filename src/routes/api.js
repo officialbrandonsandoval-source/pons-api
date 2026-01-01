@@ -318,3 +318,23 @@ router.post('/reports/executive', async (req, res) => {
 });
 
 export default router;
+
+// Direct leak detection with inline data (for testing/webhook)
+router.post('/leaks/analyze', async (req, res) => {
+  try {
+    const { contacts = [], opportunities = [], activities = [], reps = [], includeAI = false } = req.body;
+    
+    const result = await detectLeaks({
+      contacts,
+      opportunities,
+      activities,
+      reps,
+      includeAI
+    });
+
+    res.json(result);
+  } catch (error) {
+    console.error('[/leaks/analyze] Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
