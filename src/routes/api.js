@@ -7,6 +7,7 @@ import { getProvider, listProviders } from '../providers/index.js';
 import { detectLeaks, calculateRepKPIs } from '../services/leakDetector.js';
 import { validateOutreach, validateBatch } from '../services/contactValidation.js';
 import { analyzeRepPerformance, generateExecutiveSummary } from '../services/gemini.js';
+import { generateSpeech, VOICES } from '../services/voice.js';
 import { WebhookProvider } from '../providers/webhook.js';
 import { analyze, quickAnalysis, voiceSummary } from '../ai/insightEngine.js';
 import { scoreLeads } from '../ai/leadScoring.js';
@@ -474,6 +475,65 @@ router.post('/actions/next', async (req, res) => {
     res.json(result);
   } catch (error) {
     console.error('[/actions/next] Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ===========================================
+// VOICE (OpenAI TTS)
+// ===========================================
+
+// Get available voices
+router.get('/voice/voices', (req, res) => {
+  res.json({ voices: VOICES });
+});
+
+// Generate speech from text
+router.post('/voice/speak', async (req, res) => {
+  try {
+    const { text, voice = 'nova' } = req.body;
+    
+    if (!text) {
+      return res.status(400).json({ error: 'text is required' });
+    }
+
+    if (text.length > 4096) {
+      return res.status(400).json({ error: 'text too long (max 4096 chars)' });
+    }
+
+    const audioBuffer = await generateSpeech(text, voice);
+    
+    res.set({
+      'Content-Type': 'audio/mpeg',
+      'Content-Length': audioBuffer.length,
+      'Cache-Control': 'no-cache'
+    });
+    res.send(audioBuffer);
+  } catch (error) {
+    console.error('[/voice/speak] Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Voice summary - analyze data and return audio
+router.post('/voice/summary', async (req, res) => {
+  try {
+    const { leads = [], opportunities = [], activities = [], voice = 'nova' } = req.body;
+    
+    // Get text summary
+    const summary = await voiceSummary({ leads, opportunities, activities });
+    
+    // Convert to speech
+    const audioBuffer = await generateSpeech(summary.text, voice);
+    
+    res.set({
+      'Content-Type': 'audio/mpeg',
+      'Content-Length': audioBuffer.length,
+      'X-Summary-Text': encodeURIComponent(summary.text)
+    });
+    res.send(audioBuffer);
+  } catch (error) {
+    console.error('[/voice/summary] Error:', error);
     res.status(500).json({ error: error.message });
   }
 });

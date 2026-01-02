@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import { initGemini } from './services/gemini.js';
+import { initVoice } from './services/voice.js';
 import apiRoutes from './routes/api.js';
 
 const app = express();
@@ -33,16 +34,16 @@ const limiter = rateLimit({
   windowMs: 60 * 1000,
   max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100'),
   message: { error: 'Too many requests, please try again later' },
-  skip: (req) => req.method === 'OPTIONS' // Skip rate limit for preflight
+  skip: (req) => req.method === 'OPTIONS'
 });
 app.use(limiter);
 
 // Optional API key auth
 app.use((req, res, next) => {
-  if (req.method === 'OPTIONS') return next(); // Skip auth for preflight
+  if (req.method === 'OPTIONS') return next();
   const apiKey = process.env.API_KEY;
   if (apiKey && req.headers['x-api-key'] !== apiKey) {
-    if (req.path !== '/health' && req.path !== '/') {
+    if (req.path !== '/health' && req.path !== '/' && !req.path.startsWith('/voice')) {
       return res.status(401).json({ error: 'Invalid API key' });
     }
   }
@@ -58,10 +59,14 @@ app.use((req, res, next) => {
 // Routes
 app.use('/', apiRoutes);
 
-// Initialize Gemini
+// Initialize services
 if (process.env.GEMINI_API_KEY) {
   initGemini();
   console.log('✓ Gemini AI initialized');
+}
+
+if (process.env.OPENAI_API_KEY) {
+  initVoice();
 }
 
 // Only listen in non-serverless environment
