@@ -3,9 +3,9 @@
  * Connects to Pipedrive API for deal and activity data
  */
 
-const axios = require('axios');
+import axios from 'axios';
 
-class PipedriveProvider {
+export class PipedriveProvider {
   constructor(config = {}) {
     this.apiToken = config.apiToken || process.env.PIPEDRIVE_API_TOKEN;
     this.baseUrl = 'https://api.pipedrive.com/v1';
@@ -94,4 +94,4 @@ class PipedriveProvider {
   }
 }
 
-module.exports = PipedriveProvider;
+export default PipedriveProvider;
