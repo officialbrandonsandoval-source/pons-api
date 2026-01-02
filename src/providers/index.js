@@ -6,18 +6,23 @@
 import { GoHighLevelProvider } from './ghl.js';
 import { HubSpotProvider } from './hubspot.js';
 import { SalesforceProvider } from './salesforce.js';
+import { PipedriveProvider } from './pipedrive.js';
+import { ZohoProvider } from './zoho.js';
 import { WebhookProvider } from './webhook.js';
 
 const providers = {
   ghl: GoHighLevelProvider,
+  gohighlevel: GoHighLevelProvider,
   hubspot: HubSpotProvider,
   salesforce: SalesforceProvider,
+  pipedrive: PipedriveProvider,
+  zoho: ZohoProvider,
   webhook: WebhookProvider
 };
 
 /**
  * Get a CRM provider instance
- * @param {string} name - Provider name (ghl, hubspot, salesforce, webhook)
+ * @param {string} name - Provider name (ghl, hubspot, salesforce, pipedrive, zoho, webhook)
  * @param {Object} config - Provider configuration
  * @returns {BaseCRMProvider}
  */
@@ -33,13 +38,15 @@ export function getProvider(name, config = {}) {
  * List available providers
  */
 export function listProviders() {
-  return Object.keys(providers);
+  return ['ghl', 'hubspot', 'salesforce', 'pipedrive', 'zoho', 'webhook'];
 }
 
 export {
   GoHighLevelProvider,
   HubSpotProvider,
   SalesforceProvider,
+  PipedriveProvider,
+  ZohoProvider,
   WebhookProvider
 };
 
