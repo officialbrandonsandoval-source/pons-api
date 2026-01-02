@@ -1,43 +1,42 @@
-# PONS SESSION STATE
+# PONS-API SESSION STATE
 > **TRIGGER:** Say "revert to the status md" to resume from this exact point
 
 ## LAST ACTION
-Built + deployed full intelligence layer:
-- src/ai/leadScoring.js ✅
-- src/ai/dealPrioritization.js ✅
-- src/ai/actionRecommendations.js ✅
-- src/ai/insightEngine.js ✅
+Intelligence layer complete. All endpoints live.
 
 ## CURRENT BLOCKER
 None
 
-## VERIFIED WORKING ✅
-- Frontend: https://www.pons.solutions
-- Backend: https://pons-api.vercel.app
-- Demo Mode: full flow working
-- /leads/score - scores leads 0-100, tiers (HOT/WARM/COLD/DEAD)
-- /deals/prioritize - ranks deals by ROI potential
-- /actions - prioritized action list
-- /actions/next - single most important action
-- /analyze - full intelligence report
-- /analyze/quick - fast essentials
-- /analyze/voice - speakable summary
+## COMPLETED ✅
+- src/ai/leadScoring.js
+- src/ai/dealPrioritization.js
+- src/ai/actionRecommendations.js
+- src/ai/insightEngine.js
+- All API routes wired
 
-## NEXT STEP
-Wire intelligence to frontend:
-1. Update dashboard to show lead scores
-2. Add deal priority view
-3. Connect "Next Best Action" to UI
-4. Wire voice mode to /analyze/voice endpoint
+## LIVE ENDPOINTS
+| Endpoint | Purpose |
+|----------|---------|
+| POST /leads/score | Score leads 0-100 |
+| POST /deals/prioritize | Rank deals by ROI |
+| POST /actions | Full action list |
+| POST /actions/next | Single best action |
+| POST /analyze | Full intelligence |
+| POST /analyze/quick | Fast essentials |
+| POST /analyze/voice | Speakable summary |
+| POST /leaks/analyze | Leak detection |
 
-## QUICK COMMANDS
-```bash
-# Test lead scoring
-curl -s https://pons-api.vercel.app/leads/score -X POST -H "Content-Type: application/json" -d '{"leads":[{"id":"1","firstName":"Test","leadSource":"referral","createdAt":"2026-01-02"}]}'
+## DEPLOYMENT
+URL: https://pons-api.vercel.app ✅
 
-# Test deal prioritization
-curl -s https://pons-api.vercel.app/deals/prioritize -X POST -H "Content-Type: application/json" -d '{"opportunities":[{"id":"1","name":"Deal","value":50000,"status":"open","stage":"proposal"}]}'
-```
+## CRM PROVIDERS
+- HubSpot: ✅ Ready
+- GHL: ⚠️ Needs testing
+- Salesforce: ❌ Stub
+- Pipedrive: ❌ Stub
+- Zoho: ❌ Stub
+- Webhook: ✅ Working
 
 ---
-**Updated:** 2026-01-02 11:16 AM PST
+**Updated:** 2026-01-02 1:15 PM PST
+**Status:** SHIPPABLE ✅
