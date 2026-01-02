@@ -8,6 +8,10 @@ import { detectLeaks, calculateRepKPIs } from '../services/leakDetector.js';
 import { validateOutreach, validateBatch } from '../services/contactValidation.js';
 import { analyzeRepPerformance, generateExecutiveSummary } from '../services/gemini.js';
 import { WebhookProvider } from '../providers/webhook.js';
+import { analyze, quickAnalysis, voiceSummary } from '../ai/insightEngine.js';
+import { scoreLeads } from '../ai/leadScoring.js';
+import { prioritizeDeals } from '../ai/dealPrioritization.js';
+import { generateActions, getNextBestAction } from '../ai/actionRecommendations.js';
 
 const router = Router();
 
@@ -334,6 +338,142 @@ router.post('/leaks/analyze', async (req, res) => {
     res.json(result);
   } catch (error) {
     console.error('[/leaks/analyze] Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ===========================================
+// INTELLIGENCE ENGINE
+// ===========================================
+
+// Full analysis - comprehensive revenue intelligence
+router.post('/analyze', async (req, res) => {
+  try {
+    const { contacts = [], opportunities = [], activities = [], leads = [], reps = [], includeAI = false } = req.body;
+    
+    const result = await analyze({
+      contacts,
+      opportunities,
+      activities,
+      leads,
+      reps
+    }, { includeAI });
+
+    res.json(result);
+  } catch (error) {
+    console.error('[/analyze] Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Quick analysis - fast essentials
+router.post('/analyze/quick', async (req, res) => {
+  try {
+    const { opportunities = [], activities = [], leads = [] } = req.body;
+    
+    const result = await quickAnalysis({
+      leads,
+      opportunities,
+      activities
+    });
+
+    res.json(result);
+  } catch (error) {
+    console.error('[/analyze/quick] Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Voice summary - speakable response
+router.post('/analyze/voice', async (req, res) => {
+  try {
+    const { opportunities = [], activities = [], leads = [] } = req.body;
+    
+    const result = await voiceSummary({
+      leads,
+      opportunities,
+      activities
+    });
+
+    res.json(result);
+  } catch (error) {
+    console.error('[/analyze/voice] Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ===========================================
+// LEAD SCORING
+// ===========================================
+
+router.post('/leads/score', async (req, res) => {
+  try {
+    const { leads = [], activities = [] } = req.body;
+    const result = scoreLeads(leads, activities);
+    res.json(result);
+  } catch (error) {
+    console.error('[/leads/score] Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ===========================================
+// DEAL PRIORITIZATION
+// ===========================================
+
+router.post('/deals/prioritize', async (req, res) => {
+  try {
+    const { opportunities = [], activities = [] } = req.body;
+    const result = prioritizeDeals(opportunities, activities);
+    res.json(result);
+  } catch (error) {
+    console.error('[/deals/prioritize] Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ===========================================
+// ACTION RECOMMENDATIONS
+// ===========================================
+
+router.post('/actions', async (req, res) => {
+  try {
+    const { leads = [], opportunities = [], activities = [], reps = [], leadScores = [], dealPriorities = [], leaks = [] } = req.body;
+    
+    const result = generateActions({
+      leads,
+      deals: opportunities,
+      activities,
+      reps,
+      leadScores,
+      dealPriorities,
+      leaks
+    });
+
+    res.json(result);
+  } catch (error) {
+    console.error('[/actions] Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Next best action - single most important thing
+router.post('/actions/next', async (req, res) => {
+  try {
+    const { leads = [], opportunities = [], activities = [], leadScores = [], dealPriorities = [], leaks = [] } = req.body;
+    
+    const result = getNextBestAction({
+      leads,
+      deals: opportunities,
+      activities,
+      leadScores,
+      dealPriorities,
+      leaks
+    });
+
+    res.json(result);
+  } catch (error) {
+    console.error('[/actions/next] Error:', error);
     res.status(500).json({ error: error.message });
   }
 });

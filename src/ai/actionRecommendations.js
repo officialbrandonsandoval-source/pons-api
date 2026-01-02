@@ -1,173 +1,234 @@
 /**
- * PONS Action Recommendations Engine
- * Generates specific, actionable recommendations with revenue impact
+ * PONS Action Recommendation Engine
+ * Answers: "What should I do RIGHT NOW to increase revenue?"
+ * Returns prioritized actions with expected revenue impact
  */
 
 /**
- * Generate action recommendations from analysis data
+ * Generate prioritized action list
+ * @param {Object} data - Full CRM data snapshot
+ * @param {Object} scores - Lead scores and deal priorities
+ * @returns {Object} Ordered actions with revenue impact
  */
-export function generateRecommendations(data, options = {}) {
-  const {
-    leaks = [],
-    leadScores = { leads: [] },
-    dealPriority = { deals: [] },
-    wastedEffort = {}
-  } = data;
+export function generateActions({ 
+  leads = [], 
+  deals = [], 
+  activities = [], 
+  reps = [],
+  leadScores = [],
+  dealPriorities = [],
+  leaks = []
+}, now = new Date()) {
+  
+  const actions = [];
 
-  const recommendations = [];
-
-  // 1. Critical leak actions
-  for (const leak of leaks.filter(l => l.severity === 'CRITICAL')) {
-    recommendations.push({
-      id: `rec_${leak.id}`,
-      priority: 1,
-      type: 'CRITICAL_LEAK',
-      action: leak.recommendedAction,
-      reason: leak.description,
-      revenueImpact: leak.estimatedRevenue,
-      timeframe: 'Today',
-      category: 'Revenue Protection'
+  // 1. HOT LEADS - Immediate call required
+  const hotLeads = leadScores.filter(l => l.tier === 'HOT');
+  for (const lead of hotLeads.slice(0, 3)) {
+    actions.push({
+      id: `call_hot_${lead.leadId}`,
+      type: 'CALL_HOT_LEAD',
+      priority: 100,
+      urgency: 'IMMEDIATE',
+      title: `Call hot lead: ${getLeadName(lead.leadId, leads)}`,
+      description: `Score ${lead.score}/100. ${lead.recommendation?.message || 'High conversion probability.'}`,
+      estimatedRevenue: 5000, // Assume avg deal
+      timeToExecute: '5 min',
+      relatedId: lead.leadId
     });
   }
 
-  // 2. High-value deal actions
-  const criticalDeals = dealPriority.deals?.filter(d => d.priority === 'CRITICAL') || [];
-  for (const deal of criticalDeals.slice(0, 3)) {
-    recommendations.push({
-      id: `rec_deal_${deal.dealId}`,
-      priority: 2,
-      type: 'DEAL_ACTION',
-      action: deal.nextAction.action,
-      reason: `${deal.dealName} - $${deal.value.toLocaleString()} at ${deal.stage}`,
-      revenueImpact: deal.value,
-      timeframe: 'This Week',
-      category: 'Deal Acceleration'
+  // 2. DEALS AT RISK - Rescue before lost
+  const atRiskDeals = dealPriorities.filter(d => d.urgency === 'IMMEDIATE');
+  for (const deal of atRiskDeals.slice(0, 3)) {
+    actions.push({
+      id: `rescue_${deal.dealId}`,
+      type: 'RESCUE_DEAL',
+      priority: 95,
+      urgency: 'IMMEDIATE',
+      title: `Rescue deal: ${deal.dealName}`,
+      description: `$${deal.value.toLocaleString()} at risk. ${deal.recommendation?.message || 'Going cold.'}`,
+      estimatedRevenue: deal.value,
+      timeToExecute: '15 min',
+      relatedId: deal.dealId
     });
   }
 
-  // 3. Hot lead engagement
-  const hotLeads = leadScores.leads?.filter(l => l.grade === 'A') || [];
-  if (hotLeads.length > 0) {
-    recommendations.push({
-      id: 'rec_hot_leads',
-      priority: 3,
-      type: 'LEAD_ENGAGEMENT',
-      action: `Engage ${hotLeads.length} hot leads immediately`,
-      reason: 'High-score leads ready for conversion',
-      revenueImpact: hotLeads.length * 12000,
-      timeframe: 'Today',
-      category: 'Lead Conversion'
+  // 3. READY TO CLOSE - Low effort, high return
+  const closeableDeals = dealPriorities.filter(d => 
+    d.scores?.probability >= 70 && d.recommendation?.action === 'CLOSE'
+  );
+  for (const deal of closeableDeals.slice(0, 3)) {
+    actions.push({
+      id: `close_${deal.dealId}`,
+      type: 'CLOSE_DEAL',
+      priority: 90,
+      urgency: 'TODAY',
+      title: `Close deal: ${deal.dealName}`,
+      description: `High probability (${deal.scores.probability}%). Ask for the business.`,
+      estimatedRevenue: deal.value,
+      timeToExecute: '30 min',
+      relatedId: deal.dealId
     });
   }
 
-  // 4. Stale pipeline cleanup
-  const staleDeals = dealPriority.deals?.filter(d => d.breakdown.decayPenalty <= -15) || [];
-  if (staleDeals.length > 0) {
-    const staleValue = staleDeals.reduce((sum, d) => sum + d.value, 0);
-    recommendations.push({
-      id: 'rec_stale_pipeline',
-      priority: 4,
-      type: 'PIPELINE_CLEANUP',
-      action: `Review ${staleDeals.length} stale deals - close or re-engage`,
-      reason: `$${staleValue.toLocaleString()} sitting idle in pipeline`,
-      revenueImpact: staleValue,
-      timeframe: 'This Week',
-      category: 'Pipeline Health'
+  // 4. CRITICAL LEAKS - Fix systemic issues
+  const criticalLeaks = leaks.filter(l => l.severity === 'CRITICAL');
+  for (const leak of criticalLeaks.slice(0, 2)) {
+    actions.push({
+      id: `fix_${leak.id}`,
+      type: 'FIX_LEAK',
+      priority: 85,
+      urgency: 'TODAY',
+      title: leak.title,
+      description: leak.description,
+      estimatedRevenue: leak.estimatedRevenue,
+      timeToExecute: '1 hour',
+      relatedId: leak.id
     });
   }
 
-  // 5. Wasted effort correction
-  if (wastedEffort.wastedPercentage > 15) {
-    recommendations.push({
-      id: 'rec_wasted_effort',
-      priority: 5,
-      type: 'PROCESS_IMPROVEMENT',
-      action: 'Review activity targeting - high wasted effort detected',
-      reason: `${wastedEffort.wastedPercentage}% of activities on dead/unresponsive contacts`,
-      revenueImpact: 0,
-      timeframe: 'This Week',
-      category: 'Efficiency'
+  // 5. FOLLOW-UPS DUE - Maintain momentum
+  const followUpDeals = dealPriorities.filter(d => 
+    d.scores?.decay >= 30 && d.scores?.decay < 70
+  );
+  for (const deal of followUpDeals.slice(0, 5)) {
+    actions.push({
+      id: `followup_${deal.dealId}`,
+      type: 'FOLLOW_UP',
+      priority: 70,
+      urgency: 'TODAY',
+      title: `Follow up: ${deal.dealName}`,
+      description: `$${deal.value.toLocaleString()} - needs touch to maintain momentum`,
+      estimatedRevenue: deal.expectedValue,
+      timeToExecute: '10 min',
+      relatedId: deal.dealId
+    });
+  }
+
+  // 6. WARM LEADS - Build pipeline
+  const warmLeads = leadScores.filter(l => l.tier === 'WARM');
+  for (const lead of warmLeads.slice(0, 3)) {
+    actions.push({
+      id: `work_warm_${lead.leadId}`,
+      type: 'WORK_LEAD',
+      priority: 50,
+      urgency: 'THIS_WEEK',
+      title: `Work warm lead: ${getLeadName(lead.leadId, leads)}`,
+      description: `Score ${lead.score}/100. Start outreach sequence.`,
+      estimatedRevenue: 3000,
+      timeToExecute: '10 min',
+      relatedId: lead.leadId
     });
   }
 
   // Sort by priority
-  recommendations.sort((a, b) => a.priority - b.priority);
+  actions.sort((a, b) => b.priority - a.priority);
+
+  // Calculate totals
+  const totalPotentialRevenue = actions.reduce((sum, a) => sum + a.estimatedRevenue, 0);
+  const immediateActions = actions.filter(a => a.urgency === 'IMMEDIATE');
+  const todayActions = actions.filter(a => a.urgency === 'TODAY');
 
   return {
-    recommendations,
+    actions,
+    nextBestAction: actions[0] || null,
     summary: {
-      total: recommendations.length,
-      criticalActions: recommendations.filter(r => r.priority === 1).length,
-      totalRevenueImpact: recommendations.reduce((sum, r) => sum + r.revenueImpact, 0)
+      totalActions: actions.length,
+      immediateCount: immediateActions.length,
+      todayCount: todayActions.length,
+      totalPotentialRevenue,
+      estimatedTimeToComplete: calculateTotalTime(actions)
     },
-    generatedAt: new Date().toISOString()
+    byUrgency: {
+      immediate: immediateActions,
+      today: todayActions,
+      thisWeek: actions.filter(a => a.urgency === 'THIS_WEEK'),
+      scheduled: actions.filter(a => a.urgency === 'SCHEDULED')
+    },
+    generatedAt: now.toISOString()
   };
 }
 
 /**
- * Get single most important action
+ * Get the single most important action right now
  */
-export function getTopAction(data) {
-  const { recommendations } = generateRecommendations(data);
+export function getNextBestAction(data, now = new Date()) {
+  const result = generateActions(data, now);
   
-  if (recommendations.length === 0) {
+  if (!result.nextBestAction) {
     return {
-      action: 'All clear - maintain current momentum',
-      reason: 'No urgent actions identified',
-      revenueImpact: 0
+      action: null,
+      message: 'No immediate actions required. Pipeline is healthy.',
+      suggestion: 'Focus on prospecting to build pipeline.'
     };
   }
 
-  return recommendations[0];
-}
-
-/**
- * Generate "What will hurt revenue if ignored?" report
- */
-export function getIgnoreRisks(data) {
-  const {
-    leaks = [],
-    dealPriority = { deals: [] }
-  } = data;
-
-  const risks = [];
-
-  // Critical leaks
-  for (const leak of leaks.filter(l => l.severity === 'CRITICAL' || l.severity === 'HIGH')) {
-    risks.push({
-      risk: leak.title,
-      description: leak.description,
-      revenueAtRisk: leak.estimatedRevenue,
-      daysToImpact: leak.severity === 'CRITICAL' ? 7 : 14,
-      mitigation: leak.recommendedAction
-    });
-  }
-
-  // Stale high-value deals
-  const staleHighValue = (dealPriority.deals || [])
-    .filter(d => d.value >= 50000 && d.breakdown.decayPenalty <= -10);
-  
-  for (const deal of staleHighValue) {
-    risks.push({
-      risk: `${deal.dealName} going cold`,
-      description: `$${deal.value.toLocaleString()} deal with no recent activity`,
-      revenueAtRisk: deal.value,
-      daysToImpact: 7,
-      mitigation: deal.nextAction.action
-    });
-  }
-
-  // Sort by revenue at risk
-  risks.sort((a, b) => b.revenueAtRisk - a.revenueAtRisk);
-
-  const totalRisk = risks.reduce((sum, r) => sum + r.revenueAtRisk, 0);
-
+  const action = result.nextBestAction;
   return {
-    risks,
-    totalRevenueAtRisk: totalRisk,
-    criticalRisks: risks.filter(r => r.daysToImpact <= 7).length,
-    generatedAt: new Date().toISOString()
+    action,
+    message: `${action.title} - ${action.description}`,
+    revenue: action.estimatedRevenue,
+    urgency: action.urgency,
+    timeRequired: action.timeToExecute
   };
 }
 
-export default { generateRecommendations, getTopAction, getIgnoreRisks };
+/**
+ * Get rep-specific action list
+ */
+export function getRepActions(repId, data, now = new Date()) {
+  // Filter data to this rep
+  const repLeads = data.leads?.filter(l => l.assignedTo === repId) || [];
+  const repDeals = data.deals?.filter(d => d.assignedTo === repId) || [];
+  const repActivities = data.activities?.filter(a => a.performedBy === repId) || [];
+  
+  const repLeadScores = data.leadScores?.filter(s => 
+    repLeads.some(l => l.id === s.leadId)
+  ) || [];
+  
+  const repDealPriorities = data.dealPriorities?.filter(p => 
+    repDeals.some(d => d.id === p.dealId)
+  ) || [];
+
+  const repLeaks = data.leaks?.filter(l => 
+    l.metadata?.assignedTo === repId || l.relatedIds?.includes(repId)
+  ) || [];
+
+  return generateActions({
+    leads: repLeads,
+    deals: repDeals,
+    activities: repActivities,
+    leadScores: repLeadScores,
+    dealPriorities: repDealPriorities,
+    leaks: repLeaks
+  }, now);
+}
+
+// ============================================
+// HELPERS
+// ============================================
+
+function getLeadName(leadId, leads) {
+  const lead = leads.find(l => l.id === leadId);
+  if (!lead) return `Lead #${leadId}`;
+  return `${lead.firstName || ''} ${lead.lastName || ''}`.trim() || lead.email || `Lead #${leadId}`;
+}
+
+function calculateTotalTime(actions) {
+  const minutes = actions.reduce((sum, a) => {
+    const time = a.timeToExecute || '10 min';
+    const num = parseInt(time);
+    if (time.includes('hour')) return sum + (num * 60);
+    return sum + num;
+  }, 0);
+
+  if (minutes >= 60) {
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    return `${hours}h ${mins}m`;
+  }
+  return `${minutes} min`;
+}
+
+export default { generateActions, getNextBestAction, getRepActions };

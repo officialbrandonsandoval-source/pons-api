@@ -1,262 +1,257 @@
 /**
  * PONS Insight Engine
- * Orchestrates: data → insight → priority → action → revenue impact
+ * Orchestrates all intelligence modules
+ * Single entry point for full revenue analysis
  * 
- * This is the brain that answers:
- * - What should be done right now?
- * - Which lead/deal matters most?
- * - Where is money being lost?
- * - What will hurt revenue if ignored?
+ * FLOW: data → insight → priority → action → revenue impact
  */
 
 import { scoreLeads } from './leadScoring.js';
 import { prioritizeDeals } from './dealPrioritization.js';
+import { generateActions, getNextBestAction } from './actionRecommendations.js';
+import { detectLeaks } from '../services/leakDetector.js';
 
 /**
- * Generate full revenue intelligence report
+ * Run full revenue intelligence analysis
+ * @param {Object} data - CRM data snapshot
+ * @param {Object} options - Analysis options
+ * @returns {Object} Complete intelligence report
  */
-export function generateInsights(data, options = {}) {
-  const { 
-    opportunities = [], 
-    leads = [], 
-    activities = [], 
+export async function analyze(data, options = {}) {
+  const now = options.now || new Date();
+  const includeAI = options.includeAI ?? false;
+
+  const {
+    leads = [],
     contacts = [],
+    opportunities = [],
+    activities = [],
     reps = []
   } = data;
 
-  const now = options.now || new Date();
+  // ============================================
+  // PHASE 1: SCORE & PRIORITIZE
+  // ============================================
 
-  // Build activity lookups
-  const activitiesByContact = buildActivityMap(activities, 'contactId');
-  const activitiesByLead = buildActivityMap(activities, 'contactId');
+  // Score all leads
+  const leadScoreResult = scoreLeads(leads, activities, now);
 
-  // Score leads
-  const leadScores = scoreLeads(leads, activitiesByLead, { now });
+  // Prioritize all deals
+  const dealPriorityResult = prioritizeDeals(opportunities, activities, now);
 
-  // Prioritize deals
-  const dealPriority = prioritizeDeals(opportunities, activitiesByContact, { now });
+  // ============================================
+  // PHASE 2: DETECT LEAKS
+  // ============================================
 
-  // Calculate wasted effort
-  const wastedEffort = calculateWastedEffort(activities, opportunities, leads, { now });
-
-  // Generate next best actions
-  const nextActions = generateNextActions(leadScores, dealPriority, wastedEffort);
-
-  // Revenue impact analysis
-  const revenueImpact = calculateRevenueImpact(dealPriority, leadScores);
-
-  return {
-    timestamp: now.toISOString(),
-    
-    // Top-level metrics
-    metrics: {
-      totalPipeline: dealPriority.summary.totalPipeline,
-      weightedPipeline: dealPriority.summary.weightedPipeline,
-      dealsAtRisk: dealPriority.summary.atRisk,
-      hotLeads: leadScores.summary.hotLeads,
-      avgLeadScore: leadScores.summary.avgScore,
-      avgDealScore: dealPriority.summary.avgScore
-    },
-
-    // Prioritized lists
-    topDeals: dealPriority.deals.slice(0, 10),
-    topLeads: leadScores.leads.slice(0, 10),
-
-    // Action recommendations
-    nextActions,
-    topActions: nextActions.slice(0, 5),
-
-    // Wasted effort analysis
-    wastedEffort,
-
-    // Revenue impact
-    revenueImpact,
-
-    // Full data for deep dives
-    leadScores,
-    dealPriority
-  };
-}
-
-/**
- * Get single "What should I do right now?" answer
- */
-export function getNextBestAction(data, options = {}) {
-  const insights = generateInsights(data, options);
-  
-  if (insights.nextActions.length === 0) {
-    return {
-      action: 'Pipeline looks healthy',
-      type: 'MAINTAIN',
-      reason: 'No urgent items requiring attention',
-      impact: 0
-    };
-  }
-
-  const top = insights.nextActions[0];
-  return {
-    action: top.action,
-    type: top.type,
-    reason: top.reason,
-    impact: top.potentialRevenue,
-    relatedId: top.relatedId,
-    relatedName: top.relatedName
-  };
-}
-
-/**
- * Build activity lookup map
- */
-function buildActivityMap(activities, keyField) {
-  const map = {};
-  for (const act of activities) {
-    const key = act[keyField];
-    if (!key) continue;
-    if (!map[key]) map[key] = [];
-    map[key].push(act);
-  }
-  return map;
-}
-
-/**
- * Calculate wasted effort (time spent on low-value/dead activities)
- */
-function calculateWastedEffort(activities, opportunities, leads, options = {}) {
-  const now = options.now || new Date();
-  const nowTime = now.getTime();
-  const dayMs = 86400000;
-  const thirtyDaysAgo = nowTime - (30 * dayMs);
-
-  const recentActivities = activities.filter(a => 
-    new Date(a.createdAt).getTime() > thirtyDaysAgo
-  );
-
-  // Find activities on lost/abandoned deals
-  const deadDealIds = new Set(
-    opportunities
-      .filter(o => ['lost', 'abandoned', 'closed_lost'].includes(o.status?.toLowerCase()))
-      .map(o => o.contactId)
-  );
-
-  const wastedOnDeadDeals = recentActivities.filter(a => deadDealIds.has(a.contactId));
-
-  // Find activities on unresponsive leads (no response after 5+ touches)
-  const touchCountByLead = {};
-  for (const act of activities) {
-    if (!touchCountByLead[act.contactId]) touchCountByLead[act.contactId] = 0;
-    touchCountByLead[act.contactId]++;
-  }
-
-  const unresponsiveLeadIds = new Set(
-    leads
-      .filter(l => l.status === 'new' && touchCountByLead[l.id] >= 5)
-      .map(l => l.id)
-  );
-
-  const wastedOnUnresponsive = recentActivities.filter(a => 
-    unresponsiveLeadIds.has(a.contactId)
-  );
-
-  const totalActivities = recentActivities.length;
-  const wastedActivities = wastedOnDeadDeals.length + wastedOnUnresponsive.length;
-  const wastedPercentage = totalActivities > 0 
-    ? Math.round((wastedActivities / totalActivities) * 100) 
-    : 0;
-
-  return {
-    totalActivitiesLast30Days: totalActivities,
-    wastedActivities,
-    wastedPercentage,
-    wastedOnDeadDeals: wastedOnDeadDeals.length,
-    wastedOnUnresponsive: wastedOnUnresponsive.length,
-    recommendation: wastedPercentage > 20 
-      ? 'High wasted effort. Review activity targeting.'
-      : wastedPercentage > 10
-      ? 'Moderate waste. Consider lead qualification improvements.'
-      : 'Effort well-targeted.'
-  };
-}
-
-/**
- * Generate prioritized action list
- */
-function generateNextActions(leadScores, dealPriority, wastedEffort) {
-  const actions = [];
-
-  // Critical priority deals first
-  for (const deal of dealPriority.deals.filter(d => d.priority === 'CRITICAL')) {
-    actions.push({
-      type: deal.nextAction.type,
-      action: deal.nextAction.action,
-      reason: deal.nextAction.reason,
-      relatedType: 'deal',
-      relatedId: deal.dealId,
-      relatedName: deal.dealName,
-      potentialRevenue: deal.value,
-      urgency: 'CRITICAL',
-      score: deal.score
-    });
-  }
-
-  // Hot leads
-  for (const lead of leadScores.leads.filter(l => l.grade === 'A')) {
-    actions.push({
-      type: 'ENGAGE_HOT_LEAD',
-      action: 'Immediate outreach to hot lead',
-      reason: `Lead score ${lead.score}/100`,
-      relatedType: 'lead',
-      relatedId: lead.leadId,
-      relatedName: lead.leadId,
-      potentialRevenue: 10000, // Estimated
-      urgency: 'HIGH',
-      score: lead.score
-    });
-  }
-
-  // High priority deals
-  for (const deal of dealPriority.deals.filter(d => d.priority === 'HIGH')) {
-    actions.push({
-      type: deal.nextAction.type,
-      action: deal.nextAction.action,
-      reason: deal.nextAction.reason,
-      relatedType: 'deal',
-      relatedId: deal.dealId,
-      relatedName: deal.dealName,
-      potentialRevenue: deal.value,
-      urgency: 'HIGH',
-      score: deal.score
-    });
-  }
-
-  // Sort by urgency then potential revenue
-  const urgencyOrder = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
-  actions.sort((a, b) => {
-    const urgencyDiff = urgencyOrder[a.urgency] - urgencyOrder[b.urgency];
-    if (urgencyDiff !== 0) return urgencyDiff;
-    return b.potentialRevenue - a.potentialRevenue;
+  const leakResult = await detectLeaks({
+    leads,
+    contacts,
+    opportunities,
+    activities,
+    reps,
+    now,
+    includeAI
   });
 
-  return actions;
-}
+  // ============================================
+  // PHASE 3: GENERATE ACTIONS
+  // ============================================
 
-/**
- * Calculate total revenue impact
- */
-function calculateRevenueImpact(dealPriority, leadScores) {
-  const atRiskDeals = dealPriority.deals.filter(d => d.breakdown.decayPenalty <= -10);
-  const atRiskRevenue = atRiskDeals.reduce((sum, d) => sum + d.value, 0);
+  const actionResult = generateActions({
+    leads,
+    deals: opportunities,
+    activities,
+    reps,
+    leadScores: leadScoreResult.leads,
+    dealPriorities: dealPriorityResult.deals,
+    leaks: leakResult.leaks
+  }, now);
 
-  const hotLeadPotential = leadScores.summary.hotLeads * 15000; // Avg deal estimate
-  const warmLeadPotential = leadScores.summary.warmLeads * 8000;
+  // ============================================
+  // PHASE 4: SYNTHESIZE INSIGHTS
+  // ============================================
+
+  const insights = synthesizeInsights({
+    leadScores: leadScoreResult,
+    dealPriorities: dealPriorityResult,
+    leaks: leakResult,
+    actions: actionResult
+  });
+
+  // ============================================
+  // BUILD RESPONSE
+  // ============================================
 
   return {
-    pipelineAtRisk: atRiskRevenue,
-    dealsAtRisk: atRiskDeals.length,
-    hotLeadPotential,
-    warmLeadPotential,
-    totalUpside: hotLeadPotential + warmLeadPotential,
-    netPosition: dealPriority.summary.weightedPipeline - atRiskRevenue
+    // Executive summary
+    summary: {
+      healthScore: calculateHealthScore(insights),
+      totalPipelineValue: dealPriorityResult.summary.totalPipelineValue,
+      weightedPipelineValue: dealPriorityResult.summary.weightedPipelineValue,
+      revenueAtRisk: leakResult.summary.totalEstimatedRevenue,
+      leakCount: leakResult.summary.totalLeaks,
+      criticalIssues: leakResult.summary.criticalCount,
+      actionableItems: actionResult.summary.totalActions
+    },
+
+    // Next best action (single most important thing)
+    nextBestAction: actionResult.nextBestAction,
+
+    // Top 5 priorities
+    focusList: actionResult.actions.slice(0, 5),
+
+    // Detailed results
+    leadScoring: leadScoreResult,
+    dealPrioritization: dealPriorityResult,
+    leakDetection: leakResult,
+    actionPlan: actionResult,
+
+    // AI insights (if enabled)
+    aiInsights: leakResult.aiInsights,
+
+    // Meta
+    insights,
+    analyzedAt: now.toISOString()
   };
 }
 
-export default { generateInsights, getNextBestAction };
+/**
+ * Quick analysis - just the essentials
+ */
+export async function quickAnalysis(data, now = new Date()) {
+  const {
+    leads = [],
+    opportunities = [],
+    activities = []
+  } = data;
+
+  // Score leads
+  const leadScores = scoreLeads(leads, activities, now);
+  
+  // Prioritize deals
+  const dealPriorities = prioritizeDeals(opportunities, activities, now);
+
+  // Get next action
+  const nextAction = getNextBestAction({
+    leads,
+    deals: opportunities,
+    activities,
+    leadScores: leadScores.leads,
+    dealPriorities: dealPriorities.deals,
+    leaks: []
+  }, now);
+
+  return {
+    hotLeads: leadScores.summary.hot,
+    topDeal: dealPriorities.summary.topDeal,
+    pipelineValue: dealPriorities.summary.totalPipelineValue,
+    nextAction: nextAction.action,
+    message: nextAction.message,
+    analyzedAt: now.toISOString()
+  };
+}
+
+/**
+ * Voice-optimized response
+ * Returns speakable summary
+ */
+export async function voiceSummary(data, now = new Date()) {
+  const result = await quickAnalysis(data, now);
+  
+  const parts = [];
+
+  // Pipeline health
+  parts.push(`Your pipeline has ${result.pipelineValue ? '$' + (result.pipelineValue / 1000).toFixed(0) + 'k' : 'no deals'} in active opportunities.`);
+
+  // Hot leads
+  if (result.hotLeads > 0) {
+    parts.push(`You have ${result.hotLeads} hot lead${result.hotLeads > 1 ? 's' : ''} ready for immediate outreach.`);
+  }
+
+  // Top deal
+  if (result.topDeal) {
+    parts.push(`Your top priority deal is ${result.topDeal.dealName} worth $${(result.topDeal.value / 1000).toFixed(0)}k.`);
+  }
+
+  // Next action
+  if (result.nextAction) {
+    parts.push(`Next action: ${result.nextAction.title}.`);
+  }
+
+  return {
+    text: parts.join(' '),
+    data: result,
+    generatedAt: now.toISOString()
+  };
+}
+
+// ============================================
+// HELPERS
+// ============================================
+
+function synthesizeInsights(results) {
+  const insights = [];
+
+  const { leadScores, dealPriorities, leaks, actions } = results;
+
+  // Lead quality insight
+  if (leadScores.summary.hot > 0) {
+    insights.push({
+      type: 'OPPORTUNITY',
+      message: `${leadScores.summary.hot} hot leads available. Speed to lead = 21x better conversion.`
+    });
+  }
+
+  if (leadScores.summary.dead > leadScores.summary.total * 0.3) {
+    insights.push({
+      type: 'WARNING',
+      message: `${Math.round((leadScores.summary.dead / leadScores.summary.total) * 100)}% of leads are dead. Review lead sources.`
+    });
+  }
+
+  // Deal velocity insight
+  const stuckDeals = dealPriorities.deals.filter(d => d.scores?.velocity <= 20).length;
+  if (stuckDeals > 0) {
+    insights.push({
+      type: 'WARNING',
+      message: `${stuckDeals} deals have stalled. Create urgency or disqualify.`
+    });
+  }
+
+  // Leak patterns
+  if (leaks.summary.criticalCount > 0) {
+    insights.push({
+      type: 'CRITICAL',
+      message: `${leaks.summary.criticalCount} critical revenue leaks detected. $${leaks.summary.totalEstimatedRevenue.toLocaleString()} at risk.`
+    });
+  }
+
+  // Capacity insight
+  const immediateActions = actions.summary.immediateCount;
+  if (immediateActions > 5) {
+    insights.push({
+      type: 'CAPACITY',
+      message: `${immediateActions} items need immediate attention. Consider prioritization or delegation.`
+    });
+  }
+
+  return insights;
+}
+
+function calculateHealthScore(insights) {
+  let score = 100;
+
+  for (const insight of insights) {
+    if (insight.type === 'CRITICAL') score -= 25;
+    else if (insight.type === 'WARNING') score -= 10;
+    else if (insight.type === 'CAPACITY') score -= 5;
+  }
+
+  return Math.max(score, 0);
+}
+
+export default { 
+  analyze, 
+  quickAnalysis, 
+  voiceSummary 
+};

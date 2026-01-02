@@ -1,214 +1,291 @@
 /**
  * PONS Lead Scoring Engine
- * Score = f(source quality, engagement, recency, fit)
- * 
- * Output: 0-100 score with breakdown
+ * Scores leads 0-100 based on quality signals
+ * Higher score = higher likelihood to convert to revenue
  */
 
-// Source quality weights (higher = better)
-const SOURCE_WEIGHTS = {
-  'referral': 95,
-  'demo_request': 90,
-  'inbound_call': 85,
-  'pricing_page': 80,
+const WEIGHTS = {
+  SOURCE_QUALITY: 25,      // Where did they come from
+  ENGAGEMENT: 25,          // How engaged are they
+  RECENCY: 20,             // How fresh is the lead
+  COMPLETENESS: 15,        // Data quality
+  FIT: 15                  // Profile match
+};
+
+const SOURCE_SCORES = {
+  'referral': 100,
+  'demo_request': 95,
+  'inbound_call': 90,
+  'pricing_page': 85,
   'contact_form': 75,
   'webinar': 70,
   'content_download': 60,
-  'website': 50,
-  'trade_show': 45,
+  'linkedin': 55,
+  'trade_show': 50,
+  'paid_ads': 45,
   'cold_outbound': 30,
-  'purchased_list': 20,
-  'unknown': 40
-};
-
-// Engagement scoring factors
-const ENGAGEMENT_WEIGHTS = {
-  meeting_scheduled: 25,
-  meeting_completed: 30,
-  email_replied: 15,
-  call_connected: 20,
-  proposal_viewed: 20,
-  pricing_discussed: 25,
-  demo_completed: 30,
-  email_opened: 5,
-  link_clicked: 10
+  'purchased_list': 15,
+  'unknown': 25
 };
 
 /**
  * Score a single lead
- * @param {Object} lead - Lead object
- * @param {Array} activities - Activities for this lead
- * @param {Object} options - Scoring options
- * @returns {Object} Score breakdown
+ * @param {Object} lead
+ * @param {Array} activities - Activities related to this lead
+ * @param {Date} now - Current date
+ * @returns {Object} { score, breakdown, tier, recommendation }
  */
-export function scoreLead(lead, activities = [], options = {}) {
-  const now = options.now || new Date();
-  const scores = {
-    source: 0,
-    engagement: 0,
-    recency: 0,
-    fit: 0,
-    total: 0
-  };
-
-  // 1. SOURCE QUALITY (0-25 points)
+export function scoreLead(lead, activities = [], now = new Date()) {
+  const breakdown = {};
+  
+  // 1. SOURCE QUALITY (25 pts)
   const sourceKey = normalizeSource(lead.leadSource);
-  const sourceWeight = SOURCE_WEIGHTS[sourceKey] || SOURCE_WEIGHTS.unknown;
-  scores.source = Math.round((sourceWeight / 100) * 25);
+  const sourceScore = SOURCE_SCORES[sourceKey] || SOURCE_SCORES.unknown;
+  breakdown.source = Math.round((sourceScore / 100) * WEIGHTS.SOURCE_QUALITY);
 
-  // 2. ENGAGEMENT (0-30 points)
-  let engagementPoints = 0;
-  const activityTypes = new Set();
+  // 2. ENGAGEMENT (25 pts)
+  const engagementScore = calculateEngagement(lead, activities, now);
+  breakdown.engagement = Math.round((engagementScore / 100) * WEIGHTS.ENGAGEMENT);
+
+  // 3. RECENCY (20 pts)
+  const recencyScore = calculateRecency(lead, now);
+  breakdown.recency = Math.round((recencyScore / 100) * WEIGHTS.RECENCY);
+
+  // 4. COMPLETENESS (15 pts)
+  const completenessScore = calculateCompleteness(lead);
+  breakdown.completeness = Math.round((completenessScore / 100) * WEIGHTS.COMPLETENESS);
+
+  // 5. FIT (15 pts)
+  const fitScore = calculateFit(lead);
+  breakdown.fit = Math.round((fitScore / 100) * WEIGHTS.FIT);
+
+  // Total score
+  const score = Object.values(breakdown).reduce((sum, v) => sum + v, 0);
   
-  for (const activity of activities) {
-    const type = activity.type?.toLowerCase() || '';
-    const outcome = activity.outcome?.toLowerCase() || '';
-    
-    if (type === 'meeting' && outcome === 'completed') {
-      engagementPoints += ENGAGEMENT_WEIGHTS.meeting_completed;
-      activityTypes.add('meeting_completed');
-    } else if (type === 'meeting') {
-      engagementPoints += ENGAGEMENT_WEIGHTS.meeting_scheduled;
-      activityTypes.add('meeting_scheduled');
-    } else if (type === 'call' && outcome === 'connected') {
-      engagementPoints += ENGAGEMENT_WEIGHTS.call_connected;
-      activityTypes.add('call_connected');
-    } else if (type === 'email' && outcome === 'replied') {
-      engagementPoints += ENGAGEMENT_WEIGHTS.email_replied;
-      activityTypes.add('email_replied');
-    } else if (type === 'demo') {
-      engagementPoints += ENGAGEMENT_WEIGHTS.demo_completed;
-      activityTypes.add('demo_completed');
-    } else if (type === 'email') {
-      engagementPoints += ENGAGEMENT_WEIGHTS.email_opened;
-    }
-  }
+  // Tier assignment
+  const tier = getTier(score);
   
-  // Cap engagement at 30
-  scores.engagement = Math.min(30, engagementPoints);
-
-  // 3. RECENCY (0-25 points)
-  // More recent = higher score
-  const createdAt = new Date(lead.createdAt);
-  const daysSinceCreated = Math.floor((now.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24));
-  
-  // Last activity matters more
-  let daysSinceLastActivity = daysSinceCreated;
-  if (activities.length > 0) {
-    const lastActivity = activities.reduce((latest, a) => {
-      const aDate = new Date(a.createdAt);
-      return aDate > latest ? aDate : latest;
-    }, new Date(0));
-    daysSinceLastActivity = Math.floor((now.getTime() - lastActivity.getTime()) / (1000 * 60 * 60 * 24));
-  }
-
-  if (daysSinceLastActivity <= 1) scores.recency = 25;
-  else if (daysSinceLastActivity <= 3) scores.recency = 22;
-  else if (daysSinceLastActivity <= 7) scores.recency = 18;
-  else if (daysSinceLastActivity <= 14) scores.recency = 14;
-  else if (daysSinceLastActivity <= 30) scores.recency = 10;
-  else if (daysSinceLastActivity <= 60) scores.recency = 5;
-  else scores.recency = 2;
-
-  // 4. FIT (0-20 points)
-  // Based on data completeness and qualification signals
-  let fitPoints = 0;
-  
-  if (lead.email && lead.email.includes('@')) fitPoints += 4;
-  if (lead.phone) fitPoints += 3;
-  if (lead.company || lead.companyName) fitPoints += 4;
-  if (lead.title || lead.jobTitle) fitPoints += 3;
-  if (lead.budget || lead.estimatedValue) fitPoints += 3;
-  if (lead.timeline || lead.expectedCloseDate) fitPoints += 3;
-  
-  scores.fit = Math.min(20, fitPoints);
-
-  // TOTAL
-  scores.total = scores.source + scores.engagement + scores.recency + scores.fit;
-
-  // Grade
-  let grade = 'D';
-  if (scores.total >= 80) grade = 'A';
-  else if (scores.total >= 65) grade = 'B';
-  else if (scores.total >= 50) grade = 'C';
+  // Action recommendation
+  const recommendation = getRecommendation(score, breakdown, lead);
 
   return {
     leadId: lead.id,
-    score: scores.total,
-    grade,
-    breakdown: scores,
-    signals: {
-      source: sourceKey,
-      activityTypes: Array.from(activityTypes),
-      daysSinceLastActivity,
-      hasEmail: !!lead.email,
-      hasPhone: !!lead.phone
-    },
-    priority: scores.total >= 70 ? 'HIGH' : scores.total >= 50 ? 'MEDIUM' : 'LOW'
+    score,
+    tier,
+    breakdown,
+    recommendation,
+    scoredAt: now.toISOString()
   };
 }
 
 /**
- * Score all leads and return sorted by priority
+ * Score multiple leads and rank them
  */
-export function scoreAllLeads(leads, activities, options = {}) {
-  // Build activity lookup by contact/lead ID
-  const activityByLead = new Map();
-  for (const activity of activities) {
-    const id = activity.contactId || activity.leadId;
-    if (!activityByLead.has(id)) {
-      activityByLead.set(id, []);
-    }
-    activityByLead.get(id).push(activity);
-  }
-
-  // Score each lead
+export function scoreLeads(leads, activities = [], now = new Date()) {
+  const activityByLead = groupActivitiesByLead(activities);
+  
   const scored = leads.map(lead => {
     const leadActivities = activityByLead.get(lead.id) || [];
-    return scoreLead(lead, leadActivities, options);
+    return scoreLead(lead, leadActivities, now);
   });
 
   // Sort by score descending
   scored.sort((a, b) => b.score - a.score);
 
-  // Summary stats
-  const summary = {
-    total: scored.length,
-    highPriority: scored.filter(s => s.priority === 'HIGH').length,
-    mediumPriority: scored.filter(s => s.priority === 'MEDIUM').length,
-    lowPriority: scored.filter(s => s.priority === 'LOW').length,
-    avgScore: scored.length > 0 ? Math.round(scored.reduce((sum, s) => sum + s.score, 0) / scored.length) : 0,
-    gradeDistribution: {
-      A: scored.filter(s => s.grade === 'A').length,
-      B: scored.filter(s => s.grade === 'B').length,
-      C: scored.filter(s => s.grade === 'C').length,
-      D: scored.filter(s => s.grade === 'D').length
-    }
-  };
+  // Add rank
+  scored.forEach((s, i) => s.rank = i + 1);
 
-  return { leads: scored, summary };
+  return {
+    leads: scored,
+    summary: {
+      total: scored.length,
+      hot: scored.filter(s => s.tier === 'HOT').length,
+      warm: scored.filter(s => s.tier === 'WARM').length,
+      cold: scored.filter(s => s.tier === 'COLD').length,
+      dead: scored.filter(s => s.tier === 'DEAD').length,
+      avgScore: Math.round(scored.reduce((sum, s) => sum + s.score, 0) / scored.length) || 0
+    },
+    scoredAt: now.toISOString()
+  };
 }
 
-/**
- * Normalize source string to key
- */
+// ============================================
+// SCORING FUNCTIONS
+// ============================================
+
+function calculateEngagement(lead, activities, now) {
+  if (activities.length === 0) return 10;
+  
+  const nowTime = now.getTime();
+  const dayMs = 1000 * 60 * 60 * 24;
+  
+  let score = 0;
+  
+  // Activity count (max 40 pts)
+  const activityCount = activities.length;
+  if (activityCount >= 10) score += 40;
+  else if (activityCount >= 5) score += 30;
+  else if (activityCount >= 3) score += 20;
+  else if (activityCount >= 1) score += 10;
+
+  // Recent activity (max 30 pts)
+  const lastActivity = Math.max(...activities.map(a => new Date(a.createdAt).getTime()));
+  const daysSinceActivity = (nowTime - lastActivity) / dayMs;
+  if (daysSinceActivity <= 1) score += 30;
+  else if (daysSinceActivity <= 3) score += 25;
+  else if (daysSinceActivity <= 7) score += 15;
+  else if (daysSinceActivity <= 14) score += 5;
+
+  // Response to outreach (max 30 pts)
+  const hasResponse = activities.some(a => 
+    a.direction === 'inbound' || 
+    a.type === 'reply' || 
+    a.outcome === 'responded'
+  );
+  if (hasResponse) score += 30;
+
+  return Math.min(score, 100);
+}
+
+function calculateRecency(lead, now) {
+  const createdAt = new Date(lead.createdAt).getTime();
+  const daysSinceCreated = (now.getTime() - createdAt) / (1000 * 60 * 60 * 24);
+
+  if (daysSinceCreated <= 1) return 100;
+  if (daysSinceCreated <= 3) return 85;
+  if (daysSinceCreated <= 7) return 70;
+  if (daysSinceCreated <= 14) return 50;
+  if (daysSinceCreated <= 30) return 30;
+  if (daysSinceCreated <= 60) return 15;
+  return 5;
+}
+
+function calculateCompleteness(lead) {
+  let score = 0;
+  const fields = [
+    { key: 'email', weight: 30 },
+    { key: 'phone', weight: 25 },
+    { key: 'firstName', weight: 15 },
+    { key: 'lastName', weight: 10 },
+    { key: 'company', weight: 10 },
+    { key: 'title', weight: 10 }
+  ];
+
+  for (const field of fields) {
+    if (lead[field.key] && lead[field.key].trim() !== '') {
+      score += field.weight;
+    }
+  }
+
+  return score;
+}
+
+function calculateFit(lead) {
+  let score = 50; // Base score
+
+  // Title signals
+  const title = (lead.title || '').toLowerCase();
+  if (title.includes('owner') || title.includes('ceo') || title.includes('president')) {
+    score += 30;
+  } else if (title.includes('director') || title.includes('vp') || title.includes('head')) {
+    score += 20;
+  } else if (title.includes('manager')) {
+    score += 10;
+  }
+
+  // Company size signals (if available)
+  if (lead.companySize) {
+    if (lead.companySize >= 50) score += 20;
+    else if (lead.companySize >= 10) score += 10;
+  }
+
+  return Math.min(score, 100);
+}
+
+// ============================================
+// HELPERS
+// ============================================
+
 function normalizeSource(source) {
   if (!source) return 'unknown';
-  const s = source.toLowerCase().replace(/[^a-z0-9]/g, '_');
+  const s = source.toLowerCase().replace(/[^a-z]/g, '_');
   
-  if (s.includes('referral') || s.includes('refer')) return 'referral';
+  // Map common variations
+  if (s.includes('referral')) return 'referral';
   if (s.includes('demo')) return 'demo_request';
-  if (s.includes('inbound') || s.includes('phone')) return 'inbound_call';
   if (s.includes('pricing')) return 'pricing_page';
-  if (s.includes('contact') || s.includes('form')) return 'contact_form';
-  if (s.includes('webinar') || s.includes('event')) return 'webinar';
-  if (s.includes('download') || s.includes('content') || s.includes('ebook')) return 'content_download';
-  if (s.includes('website') || s.includes('web') || s.includes('organic')) return 'website';
-  if (s.includes('trade') || s.includes('show') || s.includes('conference')) return 'trade_show';
+  if (s.includes('webinar')) return 'webinar';
+  if (s.includes('linkedin')) return 'linkedin';
+  if (s.includes('trade') || s.includes('show') || s.includes('event')) return 'trade_show';
+  if (s.includes('paid') || s.includes('ads') || s.includes('ppc')) return 'paid_ads';
   if (s.includes('cold') || s.includes('outbound')) return 'cold_outbound';
-  if (s.includes('list') || s.includes('purchased')) return 'purchased_list';
+  if (s.includes('form') || s.includes('contact')) return 'contact_form';
+  if (s.includes('content') || s.includes('download') || s.includes('ebook')) return 'content_download';
   
   return 'unknown';
 }
 
-export default { scoreLead, scoreAllLeads };
+function getTier(score) {
+  if (score >= 75) return 'HOT';
+  if (score >= 50) return 'WARM';
+  if (score >= 25) return 'COLD';
+  return 'DEAD';
+}
+
+function getRecommendation(score, breakdown, lead) {
+  if (score >= 75) {
+    return {
+      action: 'CALL_NOW',
+      urgency: 'IMMEDIATE',
+      message: 'High-value lead. Call within 5 minutes for 21x better connection rate.'
+    };
+  }
+  
+  if (score >= 50) {
+    if (breakdown.engagement < 10) {
+      return {
+        action: 'MULTI_TOUCH',
+        urgency: 'TODAY',
+        message: 'Good lead, low engagement. Start 3-touch sequence: call, email, LinkedIn.'
+      };
+    }
+    return {
+      action: 'FOLLOW_UP',
+      urgency: 'TODAY',
+      message: 'Warm lead. Schedule discovery call.'
+    };
+  }
+  
+  if (score >= 25) {
+    if (breakdown.completeness < 8) {
+      return {
+        action: 'ENRICH',
+        urgency: 'THIS_WEEK',
+        message: 'Missing data. Enrich before outreach.'
+      };
+    }
+    return {
+      action: 'NURTURE',
+      urgency: 'THIS_WEEK',
+      message: 'Add to nurture sequence. Not ready for sales touch.'
+    };
+  }
+  
+  return {
+    action: 'DISQUALIFY',
+    urgency: 'NONE',
+    message: 'Low quality lead. Review for disqualification.'
+  };
+}
+
+function groupActivitiesByLead(activities) {
+  const map = new Map();
+  for (const act of activities) {
+    const leadId = act.leadId || act.contactId;
+    if (!map.has(leadId)) map.set(leadId, []);
+    map.get(leadId).push(act);
+  }
+  return map;
+}
+
+export default { scoreLead, scoreLeads };

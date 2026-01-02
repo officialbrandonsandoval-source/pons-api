@@ -1,231 +1,336 @@
 /**
  * PONS Deal Prioritization Engine
- * Rank = f(value, probability, velocity, decay)
- * 
- * Output: Prioritized deal list with recommended actions
+ * Ranks deals by expected ROI and urgency
+ * Output: Ordered list of deals to work on NOW
  */
 
-// Stage probability defaults (can be overridden)
-const DEFAULT_STAGE_PROBABILITY = {
-  'lead': 0.10,
-  'qualified': 0.20,
-  'discovery': 0.30,
-  'demo': 0.40,
-  'proposal': 0.50,
-  'negotiation': 0.70,
-  'verbal_commit': 0.85,
-  'closed_won': 1.0,
-  'closed_lost': 0,
-  'won': 1.0,
-  'lost': 0
-};
-
-// Velocity thresholds (days)
-const VELOCITY_THRESHOLDS = {
-  fast: 14,      // < 14 days = fast
-  normal: 30,    // 14-30 days = normal
-  slow: 60,      // 30-60 days = slow
-  stalled: 90    // > 90 days = stalled
-};
-
-// Action recommendations by situation
-const ACTIONS = {
-  high_value_stalled: 'Executive outreach required. Schedule strategy call with decision maker.',
-  high_value_no_activity: 'Critical: Re-engage immediately. Send value-add content or schedule check-in.',
-  medium_value_stuck: 'Pipeline velocity issue. Identify blockers and create urgency.',
-  closing_soon: 'Focus on closing. Remove remaining objections and confirm timeline.',
-  early_stage_high_value: 'Accelerate discovery. Book demo within 48 hours.',
-  low_engagement: 'Qualification needed. Confirm budget, authority, need, timeline.',
-  competitor_risk: 'Competitive situation. Differentiate value and accelerate timeline.',
-  default: 'Standard follow-up. Maintain momentum with regular touchpoints.'
+const WEIGHTS = {
+  VALUE: 30,           // Deal size
+  PROBABILITY: 25,     // Likelihood to close
+  VELOCITY: 20,        // Speed/momentum
+  DECAY: 15,           // Risk of losing
+  EFFORT: 10           // Inverse of effort required
 };
 
 /**
- * Calculate priority score for a single deal
- * @param {Object} deal - Deal/opportunity object
- * @param {Array} activities - Activities for this deal
- * @param {Object} options - Scoring options
+ * Prioritize a single deal
+ * @param {Object} deal
+ * @param {Array} activities - Related activities
+ * @param {Date} now
+ * @returns {Object} Priority score and recommendation
  */
-export function prioritizeDeal(deal, activities = [], options = {}) {
-  const now = options.now || new Date();
-  const stageProbs = options.stageProbabilities || DEFAULT_STAGE_PROBABILITY;
+export function prioritizeDeal(deal, activities = [], now = new Date()) {
+  const scores = {};
   
-  const scores = {
-    value: 0,           // 0-30 points
-    probability: 0,     // 0-25 points
-    velocity: 0,        // 0-25 points
-    decay: 0,           // 0-20 points (negative factor)
-    total: 0
-  };
+  // 1. VALUE SCORE (30 pts) - Weighted by deal size
+  scores.value = scoreValue(deal.value);
 
-  // 1. VALUE SCORE (0-30 points)
-  // Higher value = higher priority
-  const value = deal.value || 0;
-  if (value >= 100000) scores.value = 30;
-  else if (value >= 50000) scores.value = 25;
-  else if (value >= 25000) scores.value = 20;
-  else if (value >= 10000) scores.value = 15;
-  else if (value >= 5000) scores.value = 10;
-  else scores.value = 5;
+  // 2. PROBABILITY SCORE (25 pts) - Stage-based + signals
+  scores.probability = scoreProbability(deal, activities);
 
-  // 2. PROBABILITY SCORE (0-25 points)
-  // Based on stage
-  const stage = deal.stage?.toLowerCase().replace(/[^a-z0-9]/g, '_') || 'lead';
-  const probability = stageProbs[stage] || 0.3;
-  scores.probability = Math.round(probability * 25);
+  // 3. VELOCITY SCORE (20 pts) - Is it moving?
+  scores.velocity = scoreVelocity(deal, activities, now);
 
-  // 3. VELOCITY SCORE (0-25 points)
-  // How fast is this deal moving?
-  const createdAt = new Date(deal.createdAt);
-  const daysInPipeline = Math.floor((now.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24));
-  
-  // Calculate expected days based on stage
-  const expectedDays = {
-    'lead': 7,
-    'qualified': 14,
-    'discovery': 21,
-    'demo': 30,
-    'proposal': 45,
-    'negotiation': 60
-  }[stage] || 30;
+  // 4. DECAY SCORE (15 pts) - Risk of going cold
+  scores.decay = scoreDecay(deal, activities, now);
 
-  const velocityRatio = expectedDays / Math.max(daysInPipeline, 1);
-  if (velocityRatio >= 1.5) scores.velocity = 25;      // Ahead of schedule
-  else if (velocityRatio >= 1.0) scores.velocity = 20; // On track
-  else if (velocityRatio >= 0.7) scores.velocity = 15; // Slightly behind
-  else if (velocityRatio >= 0.5) scores.velocity = 10; // Behind
-  else scores.velocity = 5;                             // Way behind
+  // 5. EFFORT SCORE (10 pts) - Inverse effort
+  scores.effort = scoreEffort(deal, activities);
 
-  // 4. DECAY SCORE (0-20 points, reduces total)
-  // Penalize deals with no recent activity
-  let daysSinceActivity = daysInPipeline;
-  if (activities.length > 0) {
-    const lastActivity = activities.reduce((latest, a) => {
-      const aDate = new Date(a.createdAt);
-      return aDate > latest ? aDate : latest;
-    }, new Date(0));
-    daysSinceActivity = Math.floor((now.getTime() - lastActivity.getTime()) / (1000 * 60 * 60 * 24));
-  }
+  // Calculate weighted total
+  const priorityScore = 
+    (scores.value / 100) * WEIGHTS.VALUE +
+    (scores.probability / 100) * WEIGHTS.PROBABILITY +
+    (scores.velocity / 100) * WEIGHTS.VELOCITY +
+    (scores.decay / 100) * WEIGHTS.DECAY +
+    (scores.effort / 100) * WEIGHTS.EFFORT;
 
-  if (daysSinceActivity <= 3) scores.decay = 0;
-  else if (daysSinceActivity <= 7) scores.decay = 5;
-  else if (daysSinceActivity <= 14) scores.decay = 10;
-  else if (daysSinceActivity <= 30) scores.decay = 15;
-  else scores.decay = 20;
+  // Expected value = deal value * probability
+  const expectedValue = deal.value * (scores.probability / 100);
 
-  // TOTAL (max 100, decay subtracts)
-  scores.total = Math.max(0, scores.value + scores.probability + scores.velocity - scores.decay);
-
-  // Determine recommended action
-  let action = ACTIONS.default;
-  const isHighValue = value >= 50000;
-  const isStalled = daysSinceActivity > 14;
-  const isClosing = probability >= 0.7;
-  const isEarlyStage = probability <= 0.3;
-
-  if (isHighValue && daysSinceActivity > 7) {
-    action = ACTIONS.high_value_no_activity;
-  } else if (isHighValue && daysInPipeline > 60) {
-    action = ACTIONS.high_value_stalled;
-  } else if (isClosing) {
-    action = ACTIONS.closing_soon;
-  } else if (isEarlyStage && isHighValue) {
-    action = ACTIONS.early_stage_high_value;
-  } else if (isStalled) {
-    action = ACTIONS.medium_value_stuck;
-  } else if (activities.length < 3) {
-    action = ACTIONS.low_engagement;
-  }
-
-  // Priority tier
-  let priority = 'LOW';
-  if (scores.total >= 70) priority = 'CRITICAL';
-  else if (scores.total >= 55) priority = 'HIGH';
-  else if (scores.total >= 40) priority = 'MEDIUM';
-
-  // Expected value (value * probability)
-  const expectedValue = Math.round(value * probability);
+  // Urgency based on decay
+  const urgency = getUrgency(scores.decay, scores.velocity);
 
   return {
     dealId: deal.id,
     dealName: deal.name,
-    score: scores.total,
-    priority,
-    breakdown: scores,
-    metrics: {
-      value,
-      stage,
-      probability: Math.round(probability * 100),
-      daysInPipeline,
-      daysSinceActivity,
-      expectedValue,
-      activityCount: activities.length
-    },
-    recommendedAction: action,
-    flags: {
-      isHighValue,
-      isStalled,
-      isClosing,
-      needsAttention: isHighValue && isStalled
-    }
+    value: deal.value,
+    priorityScore: Math.round(priorityScore),
+    expectedValue: Math.round(expectedValue),
+    scores,
+    urgency,
+    recommendation: getRecommendation(scores, deal),
+    scoredAt: now.toISOString()
   };
 }
 
 /**
- * Prioritize all deals and return sorted list
+ * Prioritize multiple deals
+ * Returns ranked list with clear next actions
  */
-export function prioritizeAllDeals(deals, activities, options = {}) {
-  // Filter to open deals only
-  const openDeals = deals.filter(d => 
-    d.status === 'open' || 
-    (!d.status && d.stage && !['won', 'lost', 'closed_won', 'closed_lost'].includes(d.stage?.toLowerCase()))
-  );
-
-  // Build activity lookup
-  const activityByDeal = new Map();
-  for (const activity of activities) {
-    const id = activity.contactId || activity.dealId || activity.opportunityId;
-    if (!activityByDeal.has(id)) {
-      activityByDeal.set(id, []);
-    }
-    activityByDeal.get(id).push(activity);
-  }
-
-  // Score each deal
+export function prioritizeDeals(deals, activities = [], now = new Date()) {
+  const activityByDeal = groupActivitiesByDeal(activities, deals);
+  
+  // Only score open deals
+  const openDeals = deals.filter(d => d.status === 'open');
+  
   const prioritized = openDeals.map(deal => {
-    const dealActivities = activityByDeal.get(deal.contactId) || activityByDeal.get(deal.id) || [];
-    return prioritizeDeal(deal, dealActivities, options);
+    const dealActivities = activityByDeal.get(deal.id) || 
+                          activityByDeal.get(deal.contactId) || [];
+    return prioritizeDeal(deal, dealActivities, now);
   });
 
-  // Sort by score descending
-  prioritized.sort((a, b) => b.score - a.score);
+  // Sort by priority score descending
+  prioritized.sort((a, b) => b.priorityScore - a.priorityScore);
 
-  // Summary
-  const summary = {
-    totalDeals: prioritized.length,
-    totalValue: prioritized.reduce((sum, d) => sum + d.metrics.value, 0),
-    totalExpectedValue: prioritized.reduce((sum, d) => sum + d.metrics.expectedValue, 0),
-    priorityDistribution: {
-      critical: prioritized.filter(d => d.priority === 'CRITICAL').length,
-      high: prioritized.filter(d => d.priority === 'HIGH').length,
-      medium: prioritized.filter(d => d.priority === 'MEDIUM').length,
-      low: prioritized.filter(d => d.priority === 'LOW').length
+  // Add rank
+  prioritized.forEach((p, i) => p.rank = i + 1);
+
+  // Calculate portfolio metrics
+  const totalValue = prioritized.reduce((sum, p) => sum + p.value, 0);
+  const totalExpected = prioritized.reduce((sum, p) => sum + p.expectedValue, 0);
+  const urgentDeals = prioritized.filter(p => p.urgency === 'IMMEDIATE' || p.urgency === 'TODAY');
+
+  return {
+    deals: prioritized,
+    summary: {
+      totalDeals: prioritized.length,
+      totalPipelineValue: totalValue,
+      weightedPipelineValue: totalExpected,
+      avgPriorityScore: Math.round(prioritized.reduce((sum, p) => sum + p.priorityScore, 0) / prioritized.length) || 0,
+      urgentCount: urgentDeals.length,
+      topDeal: prioritized[0] || null
     },
-    needsAttention: prioritized.filter(d => d.flags.needsAttention).length,
-    avgScore: prioritized.length > 0 
-      ? Math.round(prioritized.reduce((sum, d) => sum + d.score, 0) / prioritized.length) 
-      : 0
+    focusList: prioritized.slice(0, 5).map(p => ({
+      rank: p.rank,
+      name: p.dealName,
+      value: p.value,
+      urgency: p.urgency,
+      action: p.recommendation.action
+    })),
+    scoredAt: now.toISOString()
+  };
+}
+
+// ============================================
+// SCORING FUNCTIONS
+// ============================================
+
+function scoreValue(value) {
+  if (!value || value <= 0) return 10;
+  
+  // Logarithmic scale to handle wide range
+  // $1k = 30, $10k = 50, $50k = 70, $100k = 80, $500k = 95
+  if (value >= 500000) return 100;
+  if (value >= 100000) return 85;
+  if (value >= 50000) return 70;
+  if (value >= 25000) return 60;
+  if (value >= 10000) return 50;
+  if (value >= 5000) return 40;
+  if (value >= 1000) return 30;
+  return 20;
+}
+
+function scoreProbability(deal, activities) {
+  let score = 50; // Base
+
+  // Stage-based scoring
+  const stage = (deal.stage || '').toLowerCase();
+  const stageScores = {
+    'closed': 100,
+    'contract': 90,
+    'negotiation': 80,
+    'proposal': 70,
+    'demo': 60,
+    'qualified': 50,
+    'discovery': 40,
+    'lead': 25,
+    'new': 20
   };
 
-  return { deals: prioritized, summary };
+  for (const [key, val] of Object.entries(stageScores)) {
+    if (stage.includes(key)) {
+      score = val;
+      break;
+    }
+  }
+
+  // Engagement boost
+  if (activities.length >= 5) score += 10;
+  else if (activities.length >= 3) score += 5;
+
+  // Multi-threading boost (multiple contacts)
+  const uniqueContacts = new Set(activities.map(a => a.contactId)).size;
+  if (uniqueContacts >= 3) score += 10;
+  else if (uniqueContacts >= 2) score += 5;
+
+  return Math.min(score, 100);
 }
 
-/**
- * Get top N deals to focus on right now
- */
-export function getTopDeals(deals, activities, n = 5, options = {}) {
-  const { deals: prioritized } = prioritizeAllDeals(deals, activities, options);
-  return prioritized.slice(0, n);
+function scoreVelocity(deal, activities, now) {
+  if (activities.length === 0) return 20;
+
+  const nowTime = now.getTime();
+  const dayMs = 1000 * 60 * 60 * 24;
+  
+  // Sort activities by date
+  const sorted = [...activities].sort((a, b) => 
+    new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
+
+  // Recent activity score
+  const lastActivityTime = new Date(sorted[0].createdAt).getTime();
+  const daysSinceActivity = (nowTime - lastActivityTime) / dayMs;
+
+  let score = 0;
+  
+  // Recency (max 50)
+  if (daysSinceActivity <= 1) score += 50;
+  else if (daysSinceActivity <= 3) score += 40;
+  else if (daysSinceActivity <= 7) score += 25;
+  else if (daysSinceActivity <= 14) score += 10;
+
+  // Activity frequency in last 14 days (max 30)
+  const recentActivities = activities.filter(a => {
+    const age = (nowTime - new Date(a.createdAt).getTime()) / dayMs;
+    return age <= 14;
+  }).length;
+
+  if (recentActivities >= 5) score += 30;
+  else if (recentActivities >= 3) score += 20;
+  else if (recentActivities >= 1) score += 10;
+
+  // Stage progression (max 20)
+  const hasProgressed = deal.stageChangedAt && 
+    (nowTime - new Date(deal.stageChangedAt).getTime()) / dayMs <= 14;
+  if (hasProgressed) score += 20;
+
+  return Math.min(score, 100);
 }
 
-export default { prioritizeDeal, prioritizeAllDeals, getTopDeals };
+function scoreDecay(deal, activities, now) {
+  // Higher score = MORE at risk (needs attention)
+  const nowTime = now.getTime();
+  const dayMs = 1000 * 60 * 60 * 24;
+
+  let riskScore = 0;
+
+  // Days since last activity
+  let daysSinceActivity = 999;
+  if (activities.length > 0) {
+    const lastActivity = Math.max(...activities.map(a => new Date(a.createdAt).getTime()));
+    daysSinceActivity = (nowTime - lastActivity) / dayMs;
+  }
+
+  if (daysSinceActivity > 30) riskScore += 50;
+  else if (daysSinceActivity > 14) riskScore += 35;
+  else if (daysSinceActivity > 7) riskScore += 20;
+  else if (daysSinceActivity > 3) riskScore += 10;
+
+  // High value at risk multiplier
+  if (deal.value >= 50000 && daysSinceActivity > 7) {
+    riskScore += 25;
+  }
+
+  // Stuck in stage too long
+  const daysInStage = deal.updatedAt ? 
+    (nowTime - new Date(deal.updatedAt).getTime()) / dayMs : 30;
+  
+  if (daysInStage > 21) riskScore += 25;
+  else if (daysInStage > 14) riskScore += 15;
+
+  return Math.min(riskScore, 100);
+}
+
+function scoreEffort(deal, activities) {
+  // Higher score = LESS effort needed (easier to close)
+  let score = 50;
+
+  // More activities = more invested = easier to continue
+  if (activities.length >= 10) score += 25;
+  else if (activities.length >= 5) score += 15;
+
+  // Later stage = less effort to close
+  const stage = (deal.stage || '').toLowerCase();
+  if (stage.includes('contract') || stage.includes('negotiation')) score += 25;
+  else if (stage.includes('proposal')) score += 15;
+  else if (stage.includes('demo')) score += 5;
+
+  return Math.min(score, 100);
+}
+
+// ============================================
+// HELPERS
+// ============================================
+
+function getUrgency(decayScore, velocityScore) {
+  if (decayScore >= 70) return 'IMMEDIATE';
+  if (decayScore >= 50) return 'TODAY';
+  if (decayScore >= 30 || velocityScore <= 20) return 'THIS_WEEK';
+  return 'SCHEDULED';
+}
+
+function getRecommendation(scores, deal) {
+  // High decay = needs rescue
+  if (scores.decay >= 70) {
+    return {
+      action: 'RESCUE',
+      message: `Deal going cold. Immediate outreach required.`,
+      tactic: 'Call + email same day. Offer meeting or value-add.'
+    };
+  }
+
+  // Low velocity = needs push
+  if (scores.velocity <= 30) {
+    return {
+      action: 'ACCELERATE',
+      message: `Deal stalled. Create urgency.`,
+      tactic: 'Propose deadline, limited offer, or executive meeting.'
+    };
+  }
+
+  // High probability = push to close
+  if (scores.probability >= 70) {
+    return {
+      action: 'CLOSE',
+      message: `Deal ready to close. Ask for the business.`,
+      tactic: 'Send contract, schedule signing call, remove final objections.'
+    };
+  }
+
+  // Default: advance
+  return {
+    action: 'ADVANCE',
+    message: `Move deal forward.`,
+    tactic: 'Schedule next milestone: demo, proposal review, or stakeholder meeting.'
+  };
+}
+
+function groupActivitiesByDeal(activities, deals) {
+  const map = new Map();
+  
+  // Create contact-to-deal mapping
+  const contactToDeal = new Map();
+  for (const deal of deals) {
+    if (deal.contactId) contactToDeal.set(deal.contactId, deal.id);
+  }
+
+  for (const act of activities) {
+    // Try direct deal ID first
+    let dealId = act.dealId;
+    
+    // Fall back to contact mapping
+    if (!dealId && act.contactId) {
+      dealId = contactToDeal.get(act.contactId);
+    }
+
+    if (dealId) {
+      if (!map.has(dealId)) map.set(dealId, []);
+      map.get(dealId).push(act);
+    }
+  }
+
+  return map;
+}
+
+export default { prioritizeDeal, prioritizeDeals };
