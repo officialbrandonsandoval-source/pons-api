@@ -1,37 +1,43 @@
-# PONS-API SESSION STATE
+# PONS SESSION STATE
 > **TRIGGER:** Say "revert to the status md" to resume from this exact point
 
 ## LAST ACTION
-Fixed axios dependency + leads param. API fully functional.
+Built + deployed full intelligence layer:
+- src/ai/leadScoring.js ✅
+- src/ai/dealPrioritization.js ✅
+- src/ai/actionRecommendations.js ✅
+- src/ai/insightEngine.js ✅
 
 ## CURRENT BLOCKER
 None
 
-## NEXT STEP
-Build intelligence layer per spec:
-1. src/ai/leadScoring.js - Score leads by quality signals
-2. src/ai/dealPrioritization.js - Rank deals by ROI potential  
-3. src/ai/actionRecommendations.js - Next best action engine
-4. src/ai/insightEngine.js - Orchestration layer
-
 ## VERIFIED WORKING ✅
-- /health ✅
-- /leaks/analyze ✅
-- /connect ✅
-- /providers ✅
-- CORS preflight 204 ✅
-- Gemini AI integration ✅
+- Frontend: https://www.pons.solutions
+- Backend: https://pons-api.vercel.app
+- Demo Mode: full flow working
+- /leads/score - scores leads 0-100, tiers (HOT/WARM/COLD/DEAD)
+- /deals/prioritize - ranks deals by ROI potential
+- /actions - prioritized action list
+- /actions/next - single most important action
+- /analyze - full intelligence report
+- /analyze/quick - fast essentials
+- /analyze/voice - speakable summary
 
-## DEPLOYMENT
-- URL: https://pons-api.vercel.app
+## NEXT STEP
+Wire intelligence to frontend:
+1. Update dashboard to show lead scores
+2. Add deal priority view
+3. Connect "Next Best Action" to UI
+4. Wire voice mode to /analyze/voice endpoint
 
-## CRM PROVIDERS
-- HubSpot: ✅ Real API
-- GHL: ⚠️ Needs testing
-- Salesforce: ❌ Stub
-- Pipedrive: ❌ Stub  
-- Zoho: ❌ Stub
-- Webhook: ✅ Working
+## QUICK COMMANDS
+```bash
+# Test lead scoring
+curl -s https://pons-api.vercel.app/leads/score -X POST -H "Content-Type: application/json" -d '{"leads":[{"id":"1","firstName":"Test","leadSource":"referral","createdAt":"2026-01-02"}]}'
+
+# Test deal prioritization
+curl -s https://pons-api.vercel.app/deals/prioritize -X POST -H "Content-Type: application/json" -d '{"opportunities":[{"id":"1","name":"Deal","value":50000,"status":"open","stage":"proposal"}]}'
+```
 
 ---
-**Updated:** 2026-01-02 11:02 AM PST
+**Updated:** 2026-01-02 11:16 AM PST
