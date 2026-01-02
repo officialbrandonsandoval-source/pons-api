@@ -7,41 +7,39 @@ import apiRoutes from './routes/api.js';
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// CORS headers - must be first
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key, X-Requested-With');
-  
-  // Handle preflight immediately
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-  next();
-});
-
-// Middleware
+// CORS - MUST BE FIRST, BEFORE EVERYTHING
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key', 'X-Requested-With'],
-  credentials: false
+  credentials: false,
+  preflightContinue: false,
+  optionsSuccessStatus: 200
 }));
 
-// Handle preflight
-app.options('*', cors());
+// Explicit OPTIONS handler for all routes
+app.options('*', (req, res) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key, X-Requested-With');
+  res.status(200).end();
+});
+
+// Body parser
 app.use(express.json({ limit: '10mb' }));
 
-// Rate limiting
+// Rate limiting - AFTER CORS
 const limiter = rateLimit({
   windowMs: 60 * 1000,
   max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100'),
   message: { error: 'Too many requests, please try again later' },
+  skip: (req) => req.method === 'OPTIONS' // Skip rate limit for preflight
 });
 app.use(limiter);
 
 // Optional API key auth
 app.use((req, res, next) => {
+  if (req.method === 'OPTIONS') return next(); // Skip auth for preflight
   const apiKey = process.env.API_KEY;
   if (apiKey && req.headers['x-api-key'] !== apiKey) {
     if (req.path !== '/health' && req.path !== '/') {
