@@ -320,12 +320,13 @@ router.post('/reports/executive', async (req, res) => {
 // Direct leak detection with inline data (for testing/webhook)
 router.post('/leaks/analyze', async (req, res) => {
   try {
-    const { contacts = [], opportunities = [], activities = [], reps = [], includeAI = false } = req.body;
+    const { contacts = [], opportunities = [], activities = [], leads = [], reps = [], includeAI = false } = req.body;
     
     const result = await detectLeaks({
       contacts,
       opportunities,
       activities,
+      leads,
       reps,
       includeAI
     });
