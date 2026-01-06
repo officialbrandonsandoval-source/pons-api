@@ -51,3 +51,28 @@ test('GHL provider can derive locationId from JWT token payload', async () => {
   const result = await provider.testConnection();
   assert.equal(result.connected, true);
 });
+
+test('GHL provider works with token + explicit locationId', async () => {
+  const provider = new GoHighLevelProvider({
+    apiKey: 'abc123',
+    locationId: 'loc_explicit'
+  });
+
+  let called = 0;
+  global.fetch = async (url, options) => {
+    called += 1;
+    assert.match(String(url), /\/locations\/loc_explicit$/);
+    assert.equal(options?.headers?.Authorization, 'Bearer abc123');
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ name: 'Explicit Location' }),
+      json: async () => ({ name: 'Explicit Location' })
+    };
+  };
+
+  const result = await provider.testConnection();
+  assert.equal(result.connected, true);
+  assert.equal(result.locationName, 'Explicit Location');
+  assert.equal(called, 1);
+});
