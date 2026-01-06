@@ -21,6 +21,43 @@ function normalizeBearerToken(token) {
   return trimmed.toLowerCase().startsWith('bearer ') ? trimmed.slice(7).trim() : trimmed;
 }
 
+function base64UrlDecodeToJson(base64url) {
+  try {
+    const padded = String(base64url)
+      .replace(/-/g, '+')
+      .replace(/_/g, '/');
+    const padLength = (4 - (padded.length % 4)) % 4;
+    const base64 = padded + '='.repeat(padLength);
+    const str = Buffer.from(base64, 'base64').toString('utf8');
+    return JSON.parse(str);
+  } catch {
+    return null;
+  }
+}
+
+function tryExtractLocationIdFromJwt(token) {
+  const parts = String(token || '').split('.');
+  if (parts.length < 2) return null;
+  const payload = base64UrlDecodeToJson(parts[1]);
+  if (!payload || typeof payload !== 'object') return null;
+
+  // Try common claim names.
+  const candidates = [
+    payload.locationId,
+    payload.location_id,
+    payload.location,
+    payload.subAccountId,
+    payload.sub_account_id,
+    payload.subAccount,
+    payload.sub_account
+  ];
+
+  for (const c of candidates) {
+    if (typeof c === 'string' && c.trim()) return c.trim();
+  }
+  return null;
+}
+
 export class GoHighLevelProvider extends BaseCRMProvider {
   constructor(config) {
     super(config);
@@ -46,6 +83,12 @@ export class GoHighLevelProvider extends BaseCRMProvider {
       config?.location,
       process.env.GHL_LOCATION_ID
     );
+
+    this.companyId = pickFirstDefined(
+      config?.companyId,
+      config?.company_id,
+      process.env.GHL_COMPANY_ID
+    );
   }
 
   get headers() {
@@ -61,9 +104,8 @@ export class GoHighLevelProvider extends BaseCRMProvider {
       if (!this.accessToken) {
         throw new Error('Missing GHL access token (config.accessToken / config.apiKey or env GHL_ACCESS_TOKEN / GHL_API_KEY)');
       }
-      if (!this.locationId) {
-        throw new Error('Missing GHL locationId (config.locationId or env GHL_LOCATION_ID)');
-      }
+
+      await this.ensureLocationId();
 
       const response = await this.safeFetch(
         `${GHL_API_BASE}/locations/${this.locationId}`,
@@ -76,7 +118,37 @@ export class GoHighLevelProvider extends BaseCRMProvider {
     }
   }
 
+  async ensureLocationId() {
+    if (this.locationId) return this.locationId;
+    if (!this.accessToken) return null;
+
+    // Best-effort: many GHL tokens are JWTs that include the sub-account/location id.
+    const fromJwt = tryExtractLocationIdFromJwt(this.accessToken);
+    if (fromJwt) {
+      this.locationId = fromJwt;
+      return this.locationId;
+    }
+
+    // Fallback: try listing accessible locations.
+    // If companyId is provided, include it for better reliability.
+    const url = new URL(`${GHL_API_BASE}/locations/search`);
+    url.searchParams.set('limit', '1');
+    url.searchParams.set('skip', '0');
+    url.searchParams.set('order', 'asc');
+    if (this.companyId) url.searchParams.set('companyId', String(this.companyId));
+
+    const result = await this.safeFetch(url.toString(), { headers: this.headers });
+    const first = result?.locations?.[0];
+    if (first?.id) {
+      this.locationId = first.id;
+      return this.locationId;
+    }
+
+    throw new Error('Missing GHL locationId. Provide config.locationId (recommended) or use a token that includes locationId claims.');
+  }
+
   async getContacts(options = {}) {
+    await this.ensureLocationId();
     const { limit = 100 } = options;
     const contacts = [];
     let startAfter = null;
@@ -116,6 +188,7 @@ export class GoHighLevelProvider extends BaseCRMProvider {
   }
 
   async getOpportunities(options = {}) {
+    await this.ensureLocationId();
     const { limit = 100 } = options;
     const opportunities = [];
     let startAfter = null;
@@ -166,6 +239,7 @@ export class GoHighLevelProvider extends BaseCRMProvider {
   }
 
   async getActivities(options = {}) {
+    await this.ensureLocationId();
     // GHL doesn't have a direct activities endpoint
     // We'll fetch from tasks and notes
     const activities = [];
@@ -220,6 +294,7 @@ export class GoHighLevelProvider extends BaseCRMProvider {
   }
 
   async getLeads(options = {}) {
+    await this.ensureLocationId();
     // In GHL, leads are contacts with specific tags or pipeline stages
     const contacts = await this.getContacts(options);
     
@@ -244,6 +319,7 @@ export class GoHighLevelProvider extends BaseCRMProvider {
 
   async getReps() {
     try {
+      await this.ensureLocationId();
       const url = `${GHL_API_BASE}/users/?locationId=${this.locationId}`;
       const response = await this.safeFetch(url, { headers: this.headers });
       

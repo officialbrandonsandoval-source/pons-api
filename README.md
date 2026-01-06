@@ -131,6 +131,24 @@ curl -X POST http://localhost:3001/api/leaks \
   }'
 ```
 
+**Simplest setup (recommended for most users):**
+
+- Provide only the token (`apiKey` / `accessToken`). If the token is a JWT that contains a `locationId` claim, PONS will auto-detect it.
+- If auto-detection fails, also provide `locationId` (fastest + most reliable).
+
+Example with token only:
+
+```bash
+curl -X POST http://localhost:3001/api/connect \
+  -H "Content-Type: application/json" \
+  -d '{
+    "crm": "ghl",
+    "config": {
+      "apiKey": "YOUR_GHL_TOKEN"
+    }
+  }'
+```
+
 ### GHL Login (OAuth)
 
 1) Send the user to:
