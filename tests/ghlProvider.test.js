@@ -53,8 +53,9 @@ test('GHL provider can derive locationId from JWT token payload', async () => {
 });
 
 test('GHL provider works with token + explicit locationId', async () => {
+  const jwtLikeToken = 'aaa.bbb.ccc';
   const provider = new GoHighLevelProvider({
-    apiKey: 'abc123',
+    apiKey: jwtLikeToken,
     locationId: 'loc_explicit'
   });
 
@@ -62,7 +63,7 @@ test('GHL provider works with token + explicit locationId', async () => {
   global.fetch = async (url, options) => {
     called += 1;
     assert.match(String(url), /\/locations\/loc_explicit$/);
-    assert.equal(options?.headers?.Authorization, 'Bearer abc123');
+    assert.equal(options?.headers?.Authorization, `Bearer ${jwtLikeToken}`);
     return {
       ok: true,
       status: 200,
@@ -75,4 +76,19 @@ test('GHL provider works with token + explicit locationId', async () => {
   assert.equal(result.connected, true);
   assert.equal(result.locationName, 'Explicit Location');
   assert.equal(called, 1);
+});
+
+test('GHL provider rejects non-JWT tokens with a clear message', async () => {
+  const provider = new GoHighLevelProvider({
+    apiKey: 'not-a-jwt',
+    locationId: 'loc_123'
+  });
+
+  global.fetch = async () => {
+    throw new Error('fetch should not be called');
+  };
+
+  const result = await provider.testConnection();
+  assert.equal(result.connected, false);
+  assert.match(result.error, /must be a JWT/i);
 });

@@ -58,6 +58,16 @@ function tryExtractLocationIdFromJwt(token) {
   return null;
 }
 
+function isJwtLike(token) {
+  const t = String(token || '').trim();
+  // JWTs have three dot-separated segments.
+  return t.split('.').length === 3;
+}
+
+function jwtFormatHelp() {
+  return 'GHL access token must be a JWT (looks like "xxxxx.yyyyy.zzzzz"). You likely pasted a GoHighLevel "API Key" instead of an API v2 access token. Use a valid GHL access token (API 2.0 / LeadConnector) or connect via OAuth.';
+}
+
 export class GoHighLevelProvider extends BaseCRMProvider {
   constructor(config) {
     super(config);
@@ -105,6 +115,10 @@ export class GoHighLevelProvider extends BaseCRMProvider {
         throw new Error('Missing GHL access token (config.accessToken / config.apiKey or env GHL_ACCESS_TOKEN / GHL_API_KEY)');
       }
 
+      if (!isJwtLike(this.accessToken)) {
+        throw new Error(jwtFormatHelp());
+      }
+
       await this.ensureLocationId();
 
       const response = await this.safeFetch(
@@ -121,6 +135,10 @@ export class GoHighLevelProvider extends BaseCRMProvider {
   async ensureLocationId() {
     if (this.locationId) return this.locationId;
     if (!this.accessToken) return null;
+
+    if (!isJwtLike(this.accessToken)) {
+      throw new Error(jwtFormatHelp());
+    }
 
     // Best-effort: many GHL tokens are JWTs that include the sub-account/location id.
     const fromJwt = tryExtractLocationIdFromJwt(this.accessToken);
