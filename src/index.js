@@ -43,7 +43,7 @@ app.use((req, res, next) => {
   if (req.method === 'OPTIONS') return next();
   const apiKey = process.env.API_KEY;
   if (apiKey && req.headers['x-api-key'] !== apiKey) {
-    if (req.path !== '/health' && req.path !== '/' && !req.path.startsWith('/voice')) {
+    if (req.path !== '/health' && req.path !== '/' && !req.path.startsWith('/voice') && !req.path.startsWith('/auth')) {
       return res.status(401).json({ error: 'Invalid API key' });
     }
   }

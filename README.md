@@ -37,6 +37,18 @@ GEMINI_API_KEY=your_gemini_key
 # CRM (pick one or more)
 GHL_API_KEY=your_ghl_key
 GHL_LOCATION_ID=your_location_id
+# (Optional, recommended) GoHighLevel OAuth (browser login flow)
+# These enable /auth/ghl/start and /auth/ghl/callback
+GHL_OAUTH_CLIENT_ID=your_ghl_oauth_client_id
+GHL_OAUTH_CLIENT_SECRET=your_ghl_oauth_client_secret
+GHL_OAUTH_REDIRECT_URI=https://your-api-domain.com/auth/ghl/callback
+GHL_OAUTH_STATE_SECRET=long_random_string
+# Optional overrides
+# GHL_OAUTH_AUTHORIZE_URL=https://marketplace.gohighlevel.com/oauth/chooselocation
+# GHL_OAUTH_TOKEN_URL=https://services.leadconnectorhq.com/oauth/token
+# GHL_OAUTH_SCOPE=...
+# Comma-separated allowlist. If set, returnUrl must match one of these origins.
+# GHL_OAUTH_ALLOWED_RETURN_ORIGINS=https://your-app-domain.com,https://another-domain.com
 # OR
 HUBSPOT_ACCESS_TOKEN=your_hubspot_token
 # OR
@@ -59,6 +71,13 @@ API_KEY=your_api_key_for_clients
 | `/api/health` | GET | Health check |
 | `/api/providers` | GET | List available CRM providers |
 | `/api/connect` | POST | Test CRM connection |
+
+### Auth (GoHighLevel OAuth)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/auth/ghl/start` | GET | Redirects user to GHL OAuth |
+| `/auth/ghl/callback` | GET | OAuth callback; returns JSON or redirects back |
 
 ### Leak Detection
 
@@ -110,6 +129,32 @@ curl -X POST http://localhost:3001/api/leaks \
     },
     "includeAI": true
   }'
+```
+
+### GHL Login (OAuth)
+
+1) Send the user to:
+
+`GET https://your-api-domain.com/auth/ghl/start?returnUrl=https://your-app-domain.com/oauth-complete`
+
+2) After the user authorizes, GHL will call back:
+
+`GET https://your-api-domain.com/auth/ghl/callback?code=...&state=...`
+
+3) If `returnUrl` was provided, the API redirects the user back to your app and puts tokens in the URL fragment (so they are not sent to your app server via HTTP headers):
+
+`https://your-app-domain.com/oauth-complete#provider=ghl&access_token=...&refresh_token=...&location_id=...`
+
+4) Your app should read `access_token` + `location_id` from the fragment and then call PONS endpoints using:
+
+```json
+{
+  "crm": "ghl",
+  "config": {
+    "accessToken": "...",
+    "locationId": "..."
+  }
+}
 ```
 
 ### Validate Before Outreach

@@ -13,6 +13,14 @@ import { analyze, quickAnalysis, voiceSummary } from '../ai/insightEngine.js';
 import { scoreLeads } from '../ai/leadScoring.js';
 import { prioritizeDeals } from '../ai/dealPrioritization.js';
 import { generateActions, getNextBestAction } from '../ai/actionRecommendations.js';
+import {
+  signState,
+  verifyState,
+  buildGhlAuthorizeUrl,
+  exchangeGhlAuthorizationCode,
+  isAllowedReturnUrl,
+  buildFragmentRedirectUrl
+} from '../services/ghlOAuth.js';
 
 const router = Router();
 
@@ -28,6 +36,125 @@ router.get('/health', (req, res) => {
 // List available CRM providers
 router.get('/providers', (req, res) => {
   res.json({ providers: listProviders() });
+});
+
+// ===========================================
+// GHL OAUTH (LOGIN)
+// ===========================================
+
+router.get('/auth/ghl/start', (req, res) => {
+  try {
+    const authorizeUrl = process.env.GHL_OAUTH_AUTHORIZE_URL || 'https://marketplace.gohighlevel.com/oauth/chooselocation';
+    const clientId = process.env.GHL_OAUTH_CLIENT_ID;
+    const redirectUri = process.env.GHL_OAUTH_REDIRECT_URI;
+    const stateSecret = process.env.GHL_OAUTH_STATE_SECRET;
+
+    if (!clientId || !redirectUri || !stateSecret) {
+      return res.status(500).json({
+        error: 'GHL OAuth not configured. Set GHL_OAUTH_CLIENT_ID, GHL_OAUTH_REDIRECT_URI, GHL_OAUTH_STATE_SECRET'
+      });
+    }
+
+    const scope = req.query.scope || process.env.GHL_OAUTH_SCOPE || undefined;
+    const returnUrl = req.query.returnUrl || req.query.return_url || undefined;
+
+    const allowedOrigins = (process.env.GHL_OAUTH_ALLOWED_RETURN_ORIGINS || '')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+
+    if (returnUrl && !isAllowedReturnUrl(returnUrl, allowedOrigins)) {
+      return res.status(400).json({ error: 'Invalid returnUrl' });
+    }
+
+    const state = signState(
+      {
+        iat: Date.now(),
+        returnUrl: returnUrl || null
+      },
+      stateSecret
+    );
+
+    const url = buildGhlAuthorizeUrl({
+      authorizeUrl,
+      clientId,
+      redirectUri,
+      scope,
+      state
+    });
+
+    if (req.query.mode === 'json') return res.json({ authorizeUrl: url });
+    return res.redirect(url);
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+router.get('/auth/ghl/callback', async (req, res) => {
+  try {
+    const tokenUrl = process.env.GHL_OAUTH_TOKEN_URL || 'https://services.leadconnectorhq.com/oauth/token';
+    const clientId = process.env.GHL_OAUTH_CLIENT_ID;
+    const clientSecret = process.env.GHL_OAUTH_CLIENT_SECRET;
+    const redirectUri = process.env.GHL_OAUTH_REDIRECT_URI;
+    const stateSecret = process.env.GHL_OAUTH_STATE_SECRET;
+
+    if (!clientId || !clientSecret || !redirectUri || !stateSecret) {
+      return res.status(500).json({
+        error: 'GHL OAuth not configured. Set GHL_OAUTH_CLIENT_ID, GHL_OAUTH_CLIENT_SECRET, GHL_OAUTH_REDIRECT_URI, GHL_OAUTH_STATE_SECRET'
+      });
+    }
+
+    const { code } = req.query;
+    if (!code) return res.status(400).json({ error: 'Missing code' });
+
+    const statePayload = verifyState(req.query.state, stateSecret);
+    if (!statePayload) return res.status(400).json({ error: 'Invalid state' });
+
+    const allowedOrigins = (process.env.GHL_OAUTH_ALLOWED_RETURN_ORIGINS || '')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+
+    const returnUrl = statePayload.returnUrl;
+    if (returnUrl && !isAllowedReturnUrl(returnUrl, allowedOrigins)) {
+      return res.status(400).json({ error: 'Invalid returnUrl' });
+    }
+
+    const token = await exchangeGhlAuthorizationCode({
+      tokenUrl,
+      code: String(code),
+      clientId,
+      clientSecret,
+      redirectUri
+    });
+
+    if (req.query.mode === 'json' || !returnUrl) {
+      return res.json({
+        connected: true,
+        provider: 'ghl',
+        accessToken: token.accessToken,
+        refreshToken: token.refreshToken,
+        expiresAt: token.expiresAt,
+        locationId: token.locationId,
+        companyId: token.companyId,
+        raw: token.raw
+      });
+    }
+
+    // Redirect back to the app with tokens in the URL fragment (not sent to servers).
+    const redirectTo = buildFragmentRedirectUrl(returnUrl, {
+      provider: 'ghl',
+      access_token: token.accessToken || '',
+      refresh_token: token.refreshToken || '',
+      expires_at: token.expiresAt || '',
+      location_id: token.locationId || '',
+      company_id: token.companyId || ''
+    });
+
+    return res.redirect(redirectTo);
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
 });
 
 // Test CRM connection

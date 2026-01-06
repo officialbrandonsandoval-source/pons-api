@@ -7,17 +7,50 @@ import { BaseCRMProvider } from './base.js';
 
 const GHL_API_BASE = 'https://services.leadconnectorhq.com';
 
+function pickFirstDefined(...values) {
+  for (const value of values) {
+    if (value !== undefined && value !== null && value !== '') return value;
+  }
+  return undefined;
+}
+
+function normalizeBearerToken(token) {
+  if (!token) return token;
+  const trimmed = String(token).trim();
+  if (!trimmed) return undefined;
+  return trimmed.toLowerCase().startsWith('bearer ') ? trimmed.slice(7).trim() : trimmed;
+}
+
 export class GoHighLevelProvider extends BaseCRMProvider {
   constructor(config) {
     super(config);
     this.name = 'ghl';
-    this.apiKey = config.apiKey || process.env.GHL_API_KEY;
-    this.locationId = config.locationId || process.env.GHL_LOCATION_ID;
+
+    // Support multiple common key names from clients (camelCase, snake_case, etc.)
+    const rawToken = pickFirstDefined(
+      config?.accessToken,
+      config?.access_token,
+      config?.token,
+      config?.apiKey,
+      config?.api_key,
+      process.env.GHL_ACCESS_TOKEN,
+      process.env.GHL_API_KEY // legacy name
+    );
+
+    this.accessToken = normalizeBearerToken(rawToken);
+
+    this.locationId = pickFirstDefined(
+      config?.locationId,
+      config?.location_id,
+      config?.locationID,
+      config?.location,
+      process.env.GHL_LOCATION_ID
+    );
   }
 
   get headers() {
     return {
-      'Authorization': `Bearer ${this.apiKey}`,
+      'Authorization': `Bearer ${this.accessToken}`,
       'Version': '2021-07-28',
       'Content-Type': 'application/json'
     };
@@ -25,6 +58,13 @@ export class GoHighLevelProvider extends BaseCRMProvider {
 
   async testConnection() {
     try {
+      if (!this.accessToken) {
+        throw new Error('Missing GHL access token (config.accessToken / config.apiKey or env GHL_ACCESS_TOKEN / GHL_API_KEY)');
+      }
+      if (!this.locationId) {
+        throw new Error('Missing GHL locationId (config.locationId or env GHL_LOCATION_ID)');
+      }
+
       const response = await this.safeFetch(
         `${GHL_API_BASE}/locations/${this.locationId}`,
         { headers: this.headers }
