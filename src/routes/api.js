@@ -128,6 +128,10 @@ router.get('/auth/ghl/callback', async (req, res) => {
       redirectUri
     });
 
+    // Some GHL flows include selected location/company on the callback query.
+    const locationId = token.locationId || req.query.locationId || req.query.location_id || null;
+    const companyId = token.companyId || req.query.companyId || req.query.company_id || null;
+
     if (req.query.mode === 'json' || !returnUrl) {
       return res.json({
         connected: true,
@@ -135,8 +139,8 @@ router.get('/auth/ghl/callback', async (req, res) => {
         accessToken: token.accessToken,
         refreshToken: token.refreshToken,
         expiresAt: token.expiresAt,
-        locationId: token.locationId,
-        companyId: token.companyId,
+        locationId,
+        companyId,
         raw: token.raw
       });
     }
@@ -147,8 +151,8 @@ router.get('/auth/ghl/callback', async (req, res) => {
       access_token: token.accessToken || '',
       refresh_token: token.refreshToken || '',
       expires_at: token.expiresAt || '',
-      location_id: token.locationId || '',
-      company_id: token.companyId || ''
+      location_id: locationId || '',
+      company_id: companyId || ''
     });
 
     return res.redirect(redirectTo);
