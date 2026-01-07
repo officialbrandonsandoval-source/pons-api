@@ -42,7 +42,7 @@ router.get('/providers', (req, res) => {
 // GHL OAUTH (LOGIN)
 // ===========================================
 
-router.get('/auth/ghl/start', (req, res) => {
+const ghlOAuthStartHandler = (req, res) => {
   try {
     const authorizeUrl = process.env.GHL_OAUTH_AUTHORIZE_URL || 'https://marketplace.gohighlevel.com/oauth/chooselocation';
     const clientId = process.env.GHL_OAUTH_CLIENT_ID;
@@ -88,9 +88,9 @@ router.get('/auth/ghl/start', (req, res) => {
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
-});
+};
 
-router.get('/auth/ghl/callback', async (req, res) => {
+const ghlOAuthCallbackHandler = async (req, res) => {
   try {
     const tokenUrl = process.env.GHL_OAUTH_TOKEN_URL || 'https://services.leadconnectorhq.com/oauth/token';
     const clientId = process.env.GHL_OAUTH_CLIENT_ID;
@@ -159,7 +159,15 @@ router.get('/auth/ghl/callback', async (req, res) => {
   } catch (error) {
     return res.status(400).json({ error: error.message });
   }
-});
+};
+
+// Primary (explicit) routes
+router.get('/auth/ghl/start', ghlOAuthStartHandler);
+router.get('/auth/ghl/callback', ghlOAuthCallbackHandler);
+
+// White-label friendly aliases (avoid "ghl" in URL for marketplace restrictions)
+router.get('/auth/oauth/start', ghlOAuthStartHandler);
+router.get('/auth/oauth/callback', ghlOAuthCallbackHandler);
 
 // Test CRM connection
 router.post('/connect', async (req, res) => {
