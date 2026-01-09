@@ -61,7 +61,8 @@ export function buildGhlAuthorizeUrl({
   clientId,
   redirectUri,
   scope,
-  state
+  state,
+  extraParams
 }) {
   if (!authorizeUrl) throw new Error('Missing authorizeUrl');
   if (!clientId) throw new Error('Missing clientId');
@@ -73,6 +74,13 @@ export function buildGhlAuthorizeUrl({
   url.searchParams.set('redirect_uri', redirectUri);
   if (scope) url.searchParams.set('scope', scope);
   if (state) url.searchParams.set('state', state);
+
+  if (extraParams && typeof extraParams === 'object') {
+    for (const [key, value] of Object.entries(extraParams)) {
+      if (value === undefined || value === null || value === '') continue;
+      url.searchParams.set(String(key), String(value));
+    }
+  }
   return url.toString();
 }
 

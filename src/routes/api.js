@@ -58,6 +58,9 @@ const ghlOAuthStartHandler = (req, res) => {
     const scope = req.query.scope || process.env.GHL_OAUTH_SCOPE || undefined;
     const returnUrl = req.query.returnUrl || req.query.return_url || undefined;
 
+    const versionId = req.query.version_id || req.query.versionId || process.env.GHL_OAUTH_VERSION_ID || undefined;
+    const appVersionId = req.query.appVersionId || req.query.app_version_id || process.env.GHL_OAUTH_APP_VERSION_ID || undefined;
+
     const allowedOrigins = (process.env.GHL_OAUTH_ALLOWED_RETURN_ORIGINS || '')
       .split(',')
       .map(s => s.trim())
@@ -80,7 +83,11 @@ const ghlOAuthStartHandler = (req, res) => {
       clientId,
       redirectUri,
       scope,
-      state
+      state,
+      extraParams: {
+        version_id: versionId,
+        appVersionId
+      }
     });
 
     if (req.query.mode === 'json') return res.json({ authorizeUrl: url });

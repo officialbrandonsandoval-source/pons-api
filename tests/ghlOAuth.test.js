@@ -44,6 +44,24 @@ test('buildGhlAuthorizeUrl sets required params', () => {
   assert.equal(parsed.searchParams.get('state'), 'abc');
 });
 
+test('buildGhlAuthorizeUrl supports extraParams', () => {
+  const url = buildGhlAuthorizeUrl({
+    authorizeUrl: 'https://example.com/oauth/authorize',
+    clientId: 'cid',
+    redirectUri: 'https://api.example.com/auth/ghl/callback',
+    scope: 'locations.readonly',
+    state: 'abc',
+    extraParams: {
+      version_id: 'v123',
+      appVersionId: 'av456'
+    }
+  });
+
+  const parsed = new URL(url);
+  assert.equal(parsed.searchParams.get('version_id'), 'v123');
+  assert.equal(parsed.searchParams.get('appVersionId'), 'av456');
+});
+
 test('isAllowedReturnUrl enforces allowlist origins', () => {
   assert.equal(isAllowedReturnUrl('https://a.com/x', ['https://a.com']), true);
   assert.equal(isAllowedReturnUrl('https://b.com/x', ['https://a.com']), false);
