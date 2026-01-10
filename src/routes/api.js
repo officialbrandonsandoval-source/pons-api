@@ -69,7 +69,14 @@ const ghlOAuthStartHandler = (req, res) => {
     const returnUrl = req.query.returnUrl || req.query.return_url || undefined;
 
     const versionId = req.query.version_id || req.query.versionId || process.env.GHL_OAUTH_VERSION_ID || undefined;
-    const appVersionId = req.query.appVersionId || req.query.app_version_id || process.env.GHL_OAUTH_APP_VERSION_ID || undefined;
+    let appVersionId = req.query.appVersionId || req.query.app_version_id || process.env.GHL_OAUTH_APP_VERSION_ID || undefined;
+
+    // Some marketplace flows require `appVersionId` and will error if only `version_id` is present.
+    // In many cases these IDs are identical, so default to `version_id` when `appVersionId` is missing.
+    const looksLikeObjectId = (value) => typeof value === 'string' && /^[a-f0-9]{24}$/i.test(value);
+    if (!appVersionId && looksLikeObjectId(String(versionId || ''))) {
+      appVersionId = versionId;
+    }
 
     // Pass through unknown marketplace params (if provided) to match install link expectations.
     // Avoid passing internal params that are only meaningful to this endpoint.
