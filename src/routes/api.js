@@ -44,7 +44,17 @@ router.get('/providers', (req, res) => {
 
 const ghlOAuthStartHandler = (req, res) => {
   try {
-    const authorizeUrl = process.env.GHL_OAUTH_AUTHORIZE_URL || 'https://marketplace.gohighlevel.com/oauth/chooselocation';
+    const marketplace = String(req.query.marketplace || '').toLowerCase();
+
+    // Default to env override, but allow a safe, explicit choice between the two known marketplace domains.
+    // This helps debug/resolve cases where an integration exists in one marketplace context but not the other.
+    let authorizeUrl = process.env.GHL_OAUTH_AUTHORIZE_URL || 'https://marketplace.gohighlevel.com/oauth/chooselocation';
+    if (marketplace === 'lc' || marketplace === 'leadconnector') {
+      authorizeUrl = 'https://marketplace.leadconnectorhq.com/oauth/chooselocation';
+    } else if (marketplace === 'ghl' || marketplace === 'gohighlevel' || marketplace === 'gohighlevel.com') {
+      authorizeUrl = 'https://marketplace.gohighlevel.com/oauth/chooselocation';
+    }
+
     const clientId = process.env.GHL_OAUTH_CLIENT_ID;
     const redirectUri = process.env.GHL_OAUTH_REDIRECT_URI;
     const stateSecret = process.env.GHL_OAUTH_STATE_SECRET;
@@ -60,6 +70,27 @@ const ghlOAuthStartHandler = (req, res) => {
 
     const versionId = req.query.version_id || req.query.versionId || process.env.GHL_OAUTH_VERSION_ID || undefined;
     const appVersionId = req.query.appVersionId || req.query.app_version_id || process.env.GHL_OAUTH_APP_VERSION_ID || undefined;
+
+    // Pass through unknown marketplace params (if provided) to match install link expectations.
+    // Avoid passing internal params that are only meaningful to this endpoint.
+    const passthroughParams = {};
+    const deny = new Set([
+      'mode',
+      'returnUrl',
+      'return_url',
+      'scope',
+      'marketplace',
+      'version_id',
+      'versionId',
+      'appVersionId',
+      'app_version_id'
+    ]);
+    for (const [key, rawValue] of Object.entries(req.query || {})) {
+      if (deny.has(key)) continue;
+      const value = Array.isArray(rawValue) ? rawValue[0] : rawValue;
+      if (value === undefined || value === null || value === '') continue;
+      passthroughParams[key] = String(value);
+    }
 
     const allowedOrigins = (process.env.GHL_OAUTH_ALLOWED_RETURN_ORIGINS || '')
       .split(',')
@@ -85,6 +116,7 @@ const ghlOAuthStartHandler = (req, res) => {
       scope,
       state,
       extraParams: {
+        ...passthroughParams,
         version_id: versionId,
         appVersionId
       }
